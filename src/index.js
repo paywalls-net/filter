@@ -3,7 +3,7 @@
  * filters bot-like requests by using paywalls.net authorization services.
  */
 
-import { classifyUserAgent } from './user-agent-classification.js';
+import { classifyUserAgent, loadAgentPatterns } from './user-agent-classification.js';
 
 async function logAccess(cfg, request, access) {
     // Separate html from the status in the access object.
@@ -69,7 +69,7 @@ async function checkAgentStatus(cfg, request) {
         };
     }
 
-    const agentInfo = classifyUserAgent(userAgent);
+    const agentInfo = classifyUserAgent(cfg, userAgent);
 
     const body = JSON.stringify({
         account_id: cfg.paywallsPublisherId,
@@ -129,14 +129,14 @@ function isTestBot(request) {
     const uaParam = url.searchParams.get("user-agent");
     return uaParam && uaParam.includes("bot");
 }
-function isPaywallsKnownBot(request) {
+function isPaywallsKnownBot(cfg,request) {
     const userAgent = request.headers.get("User-Agent");
     const uaClassification = classifyUserAgent(userAgent);
     return uaClassification.operator && uaClassification.agent;
 }
 
-function isRecognizedBot(request) {
-    return isFastlyKnownBot(request) || isCloudflareKnownBot(request) || isTestBot(request) || isPaywallsKnownBot(request);
+function isRecognizedBot(cfg,request) {
+    return isFastlyKnownBot(request) || isCloudflareKnownBot(request) || isTestBot(request) || isPaywallsKnownBot(cfg,request);
 }
 
 
@@ -172,8 +172,9 @@ async function cloudflare(config = null) {
             paywallsAPIKey: env.PAYWALLS_CLOUD_API_KEY,
             paywallsPublisherId: env.PAYWALLS_PUBLISHER_ID
         };
+        await loadAgentPatterns(paywallsConfig);
 
-        if (isRecognizedBot(request)) {
+        if (isRecognizedBot(paywallsConfig, request)) {
             const authz = await checkAgentStatus(paywallsConfig, request);
 
             ctx.waitUntil(logAccess(paywallsConfig, request, authz));
@@ -196,9 +197,10 @@ async function fastly(config) {
         paywallsAPIKey: config.get('PAYWALLS_API_KEY'),
         paywallsPublisherId: config.get('PAYWALLS_PUBLISHER_ID')
     };
+    await loadAgentPatterns(paywallsConfig);
 
     return async function handle(request) {
-        if (isRecognizedBot(request)) {
+        if (isRecognizedBot(paywallsConfig,request)) {
             const authz = await checkAgentStatus(paywallsConfig, request);
 
             await logAccess(paywallsConfig, request, authz);
@@ -220,6 +222,7 @@ async function fastly(config) {
  * @returns {Function} - The handler function for the specified CDN.
  */
 export async function init(cdn, config = {}) {
+
     switch (cdn.toLowerCase()) {
         case 'cloudflare':
             return await cloudflare(config);
