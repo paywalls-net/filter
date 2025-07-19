@@ -1,6 +1,6 @@
-# paywalls-net-client
+# paywalls-net/client
 
-SDK for integrating Paywalls.net authorization services with CDN or edge environments.
+SDK for integrating paywalls.net authorization services with CDN or edge environments.
 
 ## Install
 
