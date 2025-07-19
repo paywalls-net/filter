@@ -18,7 +18,7 @@ export async function loadAgentPatterns(cfg) {
     }
 
     try {
-        const response = await fetch(`${cfg.paywallsAPIHost}/api/filter/user-agent-patterns`, {
+        const response = await fetch(`${cfg.paywallsAPIHost}/api/filter/agents/metadata`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
