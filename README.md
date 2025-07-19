@@ -15,7 +15,7 @@ npm install @paywalls-net/client
 
 ## Usage
 ```javascript
-import { init } from 'paywalls-net-client';
+import { init } from '@paywalls-net/client';
 
 const handleRequest = await init('cloudflare');
 
