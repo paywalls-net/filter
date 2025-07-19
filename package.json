@@ -1,15 +1,15 @@
 {
-  "name": "@paywalls-net/client",
-  "description": "Client SDK for integrating Paywalls.net bot filtering and authorization services",
+  "name": "@paywalls-net/filter",
+  "description": "Client SDK for integrating paywalls.net bot filtering and authorization services into your server or CDN.",
   "author": "paywalls.net",
   "license": "MIT",
-  "version": "1.0.4",
+  "version": "1.0.6",
   "publishConfig": {
     "access": "public"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/paywalls-net/client-sdk"
+    "url": "https://github.com/paywalls-net/filter.git"
   },
   "type": "module",
   "main": "index.js",

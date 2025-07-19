@@ -1,11 +1,11 @@
-# paywalls-net/client
+# paywalls-net/filter
 
 SDK for integrating paywalls.net authorization services with CDN or edge environments.
 
 ## Install
 
 ```bash
-npm install @paywalls-net/client
+npm install @paywalls-net/filter
 ```
 
 ## Environment Variables
@@ -15,7 +15,7 @@ npm install @paywalls-net/client
 
 ## Usage
 ```javascript
-import { init } from '@paywalls-net/client';
+import { init } from '@paywalls-net/filter';
 
 const handleRequest = await init('cloudflare');
 
