@@ -5,7 +5,7 @@ SDK for integrating Paywalls.net authorization services with CDN or edge environ
 ## Install
 
 ```bash
-npm install paywalls-net-client
+npm install @paywalls-net/client
 ```
 
 ## Environment Variables
