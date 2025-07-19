@@ -39,27 +39,19 @@ export async function loadAgentPatterns(cfg) {
     }
 }
 
-function getAgentPatterns() {
-    if (cachedUserAgentPatterns) {
-        return cachedUserAgentPatterns;
-    } else {
-        throw new Error('User agent patterns not loaded. Call loadAgentPatterns first.');
-    }
-}
-
 /**
  * Classifies the user agent string based on fetched patterns.
  * @param {Object} cfg - Configuration object containing API host details.
  * @param {string} userAgent - The user agent string to classify.
  * @returns {Promise<Object>} An object containing the browser, OS, operator, usage, and user_initiated status.
  */
-export function classifyUserAgent(cfg, userAgent) {
+export async function classifyUserAgent(cfg, userAgent) {
     const parsedUA = new UAParser(userAgent).getResult();
 
     const browser = parsedUA.browser.name || 'Unknown';
     const os = parsedUA.os.name || 'Unknown';
 
-    const userAgentPatterns = getAgentPatterns();    
+    const userAgentPatterns = await loadAgentPatterns(cfg);
 
     for (const config of userAgentPatterns) {
         if (!config.patterns) continue;

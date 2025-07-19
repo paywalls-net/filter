@@ -69,7 +69,7 @@ async function checkAgentStatus(cfg, request) {
         };
     }
 
-    const agentInfo = classifyUserAgent(cfg, userAgent);
+    const agentInfo = await classifyUserAgent(cfg, userAgent);
 
     const body = JSON.stringify({
         account_id: cfg.paywallsPublisherId,
@@ -129,14 +129,14 @@ function isTestBot(request) {
     const uaParam = url.searchParams.get("user-agent");
     return uaParam && uaParam.includes("bot");
 }
-function isPaywallsKnownBot(cfg,request) {
+async function isPaywallsKnownBot(cfg, request) {
     const userAgent = request.headers.get("User-Agent");
-    const uaClassification = classifyUserAgent(userAgent);
+    const uaClassification = await classifyUserAgent(cfg, userAgent);
     return uaClassification.operator && uaClassification.agent;
 }
 
-function isRecognizedBot(cfg,request) {
-    return isFastlyKnownBot(request) || isCloudflareKnownBot(request) || isTestBot(request) || isPaywallsKnownBot(cfg,request);
+async function isRecognizedBot(cfg, request) {
+    return isFastlyKnownBot(request) || isCloudflareKnownBot(request) || isTestBot(request) || await isPaywallsKnownBot(cfg, request);
 }
 
 
