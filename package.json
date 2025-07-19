@@ -3,7 +3,7 @@
   "description": "Client SDK for integrating Paywalls.net bot filtering and authorization services",
   "author": "paywalls.net",
   "license": "MIT",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "publishConfig": {
     "access": "public"
   },
