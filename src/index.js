@@ -157,6 +157,38 @@ function sendResponse(authz) {
     });
 }
 
+function sendResponseForCloudFront(authz) {
+    const headers = {};
+
+    if (authz.response?.headers) {
+        for (const [key, value] of Object.entries(authz.response.headers)) {
+            headers[key.toLowerCase()] = [
+                {
+                    key: key,
+                    value: value
+                }
+            ];
+        }
+    }
+
+    // Add default Content-Type header if not already set
+    if (!headers["content-type"]) {
+        headers["content-type"] = [
+            {
+                key: "Content-Type",
+                value: "text/html"
+            }
+        ];
+    }
+
+    return {
+        status: authz.response?.code || 402,
+        statusDescription: authz.response?.code === 402 ? "Payment Required" : "Error",
+        headers: headers,
+        body: authz.response?.html || "Payment required."
+    };
+}
+
 /**
  * Detect AI Bot and authorize it using paywalls.net.
  * @param {Request} request 
@@ -214,6 +246,29 @@ async function fastly(config) {
     };
 }
 
+async function cloudfront(config) {
+    const paywallsConfig = {
+        paywallsAPIHost: config.get('PAYWALLS_CLOUD_API_HOST'),
+        paywallsAPIKey: config.get('PAYWALLS_API_KEY'),
+        paywallsPublisherId: config.get('PAYWALLS_PUBLISHER_ID')
+    };
+    await loadAgentPatterns(paywallsConfig);
+
+    return async function handle(request) {
+        if (await isRecognizedBot(paywallsConfig, request)) {
+            const authz = await checkAgentStatus(paywallsConfig, request);
+
+            await logAccess(paywallsConfig, request, authz);
+
+            if (authz.access === 'deny') {
+                return sendResponseForCloudFront(authz);
+            }
+        }
+
+        return fetch(request); // Proceed to origin/CDN
+    };
+}
+
 
 
 /**
@@ -228,6 +283,8 @@ export async function init(cdn, config = {}) {
             return await cloudflare(config);
         case 'fastly':
             return await fastly(config);
+        case 'cloudfront':
+            return await cloudfront(config);
         default:
             throw new Error(`Unsupported CDN: ${cdn}`);
     }
