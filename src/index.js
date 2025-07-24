@@ -140,7 +140,7 @@ async function isRecognizedBot(cfg, request) {
 }
 
 
-function sendResponse(authz) {
+function setHeaders(authz) {
     let headers = {
         "Content-Type": "text/html",
     };
@@ -157,7 +157,7 @@ function sendResponse(authz) {
     });
 }
 
-function sendResponseForCloudFront(authz) {
+function setCoudFrontHeaders(authz) {
     const headers = {};
 
     if (authz.response?.headers) {
@@ -206,19 +206,17 @@ async function cloudflare(config = null) {
         };
         await loadAgentPatterns(paywallsConfig);
 
-        if (isRecognizedBot(paywallsConfig, request)) {
+        if (await isRecognizedBot(paywallsConfig, request)) {
             const authz = await checkAgentStatus(paywallsConfig, request);
 
             ctx.waitUntil(logAccess(paywallsConfig, request, authz));
 
             if (authz.access === 'deny') {
-                return sendResponse(authz);
+                return setHeaders(authz);
             } else {
                 console.log("Bot-like request allowed. Proceeding to origin/CDN.");
             }
         }
-
-        return fetch(request); // Proceed to origin/CDN
     };
 }
 
@@ -232,17 +230,15 @@ async function fastly(config) {
     await loadAgentPatterns(paywallsConfig);
 
     return async function handle(request) {
-        if (isRecognizedBot(paywallsConfig,request)) {
+        if (await isRecognizedBot(paywallsConfig, request)) {
             const authz = await checkAgentStatus(paywallsConfig, request);
 
             await logAccess(paywallsConfig, request, authz);
 
             if (authz.access === 'deny') {
-                return sendResponse(authz);
+                return setHeaders(authz);
             }
         }
-
-        return fetch(request, { backend: 'origin' });
     };
 }
 
@@ -261,11 +257,10 @@ async function cloudfront(config) {
             await logAccess(paywallsConfig, request, authz);
 
             if (authz.access === 'deny') {
-                return sendResponseForCloudFront(authz);
+                return setCoudFrontHeaders(authz);
             }
         }
 
-        return fetch(request); // Proceed to origin/CDN
     };
 }
 

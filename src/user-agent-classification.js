@@ -27,15 +27,22 @@ export async function loadAgentPatterns(cfg) {
         });
 
         if (!response.ok) {
-            throw new Error(`Failed to fetch user agent patterns: ${response.status} ${response.statusText}`);
+            throw new Error(`Failed to fetch agent patterns: ${response.status} ${response.statusText}`);
         }
 
-        cachedUserAgentPatterns = await response.json();
+        const serializedPatterns = await response.json();
+
+        // Deserialize RegExp strings back into RegExp objects
+        cachedUserAgentPatterns = serializedPatterns.map((pattern) => ({
+            ...pattern,
+            patterns: pattern.patterns.map((regexString) => new RegExp(regexString.slice(1, -1))) // Remove leading and trailing slashes
+        }));
+
         cacheTimestamp = now;
         return cachedUserAgentPatterns;
     } catch (error) {
-        console.error('Failed to fetch user agent patterns:', error);
-        throw new Error('Could not load user agent patterns');
+        console.error('Error loading agent patterns:', error);
+        throw error;
     }
 }
 
@@ -56,7 +63,7 @@ export async function classifyUserAgent(cfg, userAgent) {
     for (const config of userAgentPatterns) {
         if (!config.patterns) continue;
         for (const pattern of config.patterns) {
-            if (new RegExp(pattern).test(userAgent)) {
+            if (new RegExp(pattern).test(userAgent)) {         
                 return {
                     operator: config.operator,
                     agent: config.agent || browser,
