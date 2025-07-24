@@ -157,7 +157,7 @@ function setHeaders(authz) {
     });
 }
 
-function setCoudFrontHeaders(authz) {
+function setCloudFrontHeaders(authz) {
     const headers = {};
 
     if (authz.response?.headers) {
@@ -257,7 +257,7 @@ async function cloudfront(config) {
             await logAccess(paywallsConfig, request, authz);
 
             if (authz.access === 'deny') {
-                return setCoudFrontHeaders(authz);
+                return setCloudFrontHeaders(authz);
             }
         }
 
