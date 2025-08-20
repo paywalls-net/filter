@@ -214,7 +214,7 @@ async function cloudflare(config = null) {
             if (authz.access === 'deny') {
                 return setHeaders(authz);
             } else {
-                console.log("Bot-like request allowed. Proceeding to origin/CDN.");
+                // console.log("Bot-like request allowed. Proceeding to origin/CDN.");
             }
         }
     };
