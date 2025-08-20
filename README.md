@@ -17,12 +17,18 @@ npm install @paywalls-net/filter
 ```javascript
 import { init } from '@paywalls-net/filter';
 
+// Initialize the paywalls.net handler for Cloudflare
 const handleRequest = await init('cloudflare');
 
 export default {
-  async fetch(request, env, ctx) {
-    return handleRequest(request, env, ctx);
-  }
+   async fetch(request, env, ctx) {
+       let pw_response = await handleRequest(request, env, ctx);
+       if (pw_response) {
+           // If the handler returns a response, return it
+           return pw_response;
+       }
+       return fetch(request); // Proceed to origin/CDN
+   }
 };
 ```
 
