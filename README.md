@@ -1,6 +1,6 @@
 # paywalls-net/filter
 
-SDK for integrating paywalls.net authorization services with CDN or edge environments.
+SDK for paywalls.net authorization and real-time licensing services. For use with CDN or edge environments.
 
 ## Install
 
@@ -13,6 +13,8 @@ npm install @paywalls-net/filter
 - `PAYWALLS_CLOUD_API_KEY`: The API key for accessing paywalls.net services. NOTE: This key should be treated like a password and kept secret and stored in a secure secrets vault or environment variable.
 
 ## Usage
+The following is an example of using the SDK with Cloudflare Workers:
+
 ```javascript
 import { init } from '@paywalls-net/filter';
 
