@@ -5,6 +5,8 @@
 
 import { classifyUserAgent, loadAgentPatterns } from './user-agent-classification.js';
 
+const PAYWALLS_CLOUD_API_HOST = "https://cloud-api.paywalls.net";
+
 async function logAccess(cfg, request, access) {
     // Separate html from the status in the access object.
     const { response, ...status } = access;
@@ -140,6 +142,11 @@ async function isRecognizedBot(cfg, request) {
 }
 
 
+/**
+ * Create response in format used by most CDNs
+ * @param {*} authz 
+ * @returns 
+ */
 function setHeaders(authz) {
     let headers = {
         "Content-Type": "text/html",
@@ -157,6 +164,11 @@ function setHeaders(authz) {
     });
 }
 
+/**
+ * Create CloudFront format response 
+ * @param {*} authz 
+ * @returns 
+ */
 function setCloudFrontHeaders(authz) {
     const headers = {};
 
@@ -200,7 +212,7 @@ async function cloudflare(config = null) {
 
     return async function handle(request, env, ctx) {
         const paywallsConfig = {
-            paywallsAPIHost: env.PAYWALLS_CLOUD_API_HOST,
+            paywallsAPIHost: env.PAYWALLS_CLOUD_API_HOST || PAYWALLS_CLOUD_API_HOST,
             paywallsAPIKey: env.PAYWALLS_CLOUD_API_KEY,
             paywallsPublisherId: env.PAYWALLS_PUBLISHER_ID
         };
@@ -223,7 +235,7 @@ async function cloudflare(config = null) {
 
 async function fastly(config) {
     const paywallsConfig = {
-        paywallsAPIHost: config.get('PAYWALLS_CLOUD_API_HOST'),
+        paywallsAPIHost: config.get('PAYWALLS_CLOUD_API_HOST') || PAYWALLS_CLOUD_API_HOST,
         paywallsAPIKey: config.get('PAYWALLS_API_KEY'),
         paywallsPublisherId: config.get('PAYWALLS_PUBLISHER_ID')
     };
@@ -244,7 +256,7 @@ async function fastly(config) {
 
 async function cloudfront(config) {
     const paywallsConfig = {
-        paywallsAPIHost: config.get('PAYWALLS_CLOUD_API_HOST'),
+        paywallsAPIHost: config.get('PAYWALLS_CLOUD_API_HOST') || PAYWALLS_CLOUD_API_HOST,
         paywallsAPIKey: config.get('PAYWALLS_API_KEY'),
         paywallsPublisherId: config.get('PAYWALLS_PUBLISHER_ID')
     };
@@ -260,10 +272,8 @@ async function cloudfront(config) {
                 return setCloudFrontHeaders(authz);
             }
         }
-
     };
 }
-
 
 
 /**
