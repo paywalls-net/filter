@@ -126,10 +126,14 @@ function isCloudflareKnownBot(request) {
 }
 
 function isTestBot(request) {
-    // check if the URL has a query parameter to always test as a bot
-    const url = new URL(request.url);
-    const uaParam = url.searchParams.get("user-agent");
-    return uaParam && uaParam.includes("bot");
+    try {
+        // check if the URL has a query parameter to always test as a bot
+        const url = new URL(request.url || request.uri);
+        const uaParam = url.searchParams.get("user-agent");
+        return uaParam && uaParam.includes("bot");
+    } catch (err) {
+        throw new Error(`test bot failed: ${request.url} | ${request.uri} | ${err.message}`);
+    }
 }
 async function isPaywallsKnownBot(cfg, request) {
     const userAgent = request.headers.get("User-Agent");
@@ -253,20 +257,51 @@ async function fastly(config) {
         }
     };
 }
+/**
+ * Adapt to CloudFront format
+ * Lambda@Edge events see https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/lambda-event-structure.html#lambda-event-structure-request
+ * CloudFront events see https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/functions-event-structure.html#functions-event-structure-example
+ * @param {*} request 
+ * @returns 
+ */
+function requestShim(request) {
+    if (!request.headers.get) {
+        // add get() to headers object to adapt to CloudFront
+        request.headers.get = (name) => {
+            const header = request.headers[name.toLowerCase()];
+            return header ? header[0].value : null;
+        };
+    }
+
+    // combine the CloudFront host, request.uri and request.querystring into request.url
+    if (!request.url && request.uri) {
+        let host = request.headers.get('host');
+        request.url = `http://${host}${request.uri}`;
+        if (request.querystring) {
+            request.url += `?${request.querystring}`;
+        }
+    }
+
+    return request;
+}
 
 async function cloudfront(config) {
     const paywallsConfig = {
-        paywallsAPIHost: config.get('PAYWALLS_CLOUD_API_HOST') || PAYWALLS_CLOUD_API_HOST,
-        paywallsAPIKey: config.get('PAYWALLS_API_KEY'),
-        paywallsPublisherId: config.get('PAYWALLS_PUBLISHER_ID')
+        paywallsAPIHost: config.PAYWALLS_CLOUD_API_HOST || PAYWALLS_CLOUD_API_HOST,
+        paywallsAPIKey: config.PAYWALLS_API_KEY,
+        paywallsPublisherId: config.PAYWALLS_PUBLISHER_ID
     };
     await loadAgentPatterns(paywallsConfig);
 
-    return async function handle(request) {
+    return async function handle(event, ctx) {
+        let request = event.Records[0].cf.request;
+        request = requestShim(request);
         if (await isRecognizedBot(paywallsConfig, request)) {
             const authz = await checkAgentStatus(paywallsConfig, request);
 
-            await logAccess(paywallsConfig, request, authz);
+            // log the result asynchronously
+            ctx.callbackWaitsForEmptyEventLoop = false;
+            logAccess(paywallsConfig, request, authz);
 
             if (authz.access === 'deny') {
                 return setCloudFrontHeaders(authz);
@@ -279,6 +314,7 @@ async function cloudfront(config) {
 /**
  * Initializes the appropriate handler based on the CDN.
  * @param {string} cdn - The name of the CDN (e.g., 'cloudflare', 'fastly', 'cloudfront').
+ * @param {Object} [config={}] - Optional configuration object for the CDN handler.
  * @returns {Function} - The handler function for the specified CDN.
  */
 export async function init(cdn, config = {}) {
