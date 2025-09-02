@@ -13,9 +13,18 @@ async function logAccess(cfg, request, access) {
 
     // Get all headers as a plain object (name-value pairs)
     let headers = {};
-    for (const [key, value] of request.headers.entries()) {
-        headers[key] = value;
+    if (typeof request.headers.entries === "function") {
+        // Standard Headers object (e.g., in Cloudflare Workers)
+        for (const [key, value] of request.headers.entries()) {
+            headers[key] = value;
+        }
+    } else {
+        // CloudFront headers object
+        for (const key in request.headers) {
+            headers[key] = request.headers[key][0]?.value || "";
+        }
     }
+
     const url = new URL(request.url);
     let body = {
         account_id: cfg.paywallsPublisherId,
