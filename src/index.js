@@ -2,10 +2,37 @@
  * Example publisher-hosted client code for a Cloudflare Worker that
  * filters bot-like requests by using paywalls.net authorization services.
  */
-
+const sdk_version = "1.2.x";
 import { classifyUserAgent, loadAgentPatterns } from './user-agent-classification.js';
 
 const PAYWALLS_CLOUD_API_HOST = "https://cloud-api.paywalls.net";
+
+function detectRuntime() {
+    if (typeof process !== "undefined" && process.versions && process.versions.node) {
+        return `Node.js/${process.versions.node}`;
+    } else if (typeof navigator !== "undefined" && navigator.userAgent) {
+        return `Browser/${navigator.userAgent}`;
+    } else if (typeof globalThis !== "undefined" && globalThis.Deno && Deno.version) {
+        return `Deno/${Deno.version.deno}`;
+    } else if (typeof globalThis !== "undefined" && globalThis.Bun && Bun.version) {
+        return `Bun/${Bun.version}`;
+    }
+    return "unknown";
+}
+
+function detectFetchVersion() {
+    if (typeof fetch !== "undefined" && fetch.name) {
+        return fetch.name;
+    } else if (typeof globalThis !== "undefined" && globalThis.fetch) {
+        return "native";
+    } else {
+        return "unavailable";
+    }
+}
+
+let runtime = detectRuntime();
+let fetchVersion = detectFetchVersion();
+const sdkUserAgent = `pw-filter-sdk/${sdk_version} (${runtime}; fetch/${fetchVersion})`;
 
 async function logAccess(cfg, request, access) {
     // Separate html from the status in the access object.
@@ -40,6 +67,7 @@ async function logAccess(cfg, request, access) {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
+            "User-Agent": sdkUserAgent,
             Authorization: `Bearer ${cfg.paywallsAPIKey}`
         },
         body: JSON.stringify(body)
@@ -93,6 +121,7 @@ async function checkAgentStatus(cfg, request) {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
+            "User-Agent": sdkUserAgent,
             Authorization: `Bearer ${cfg.paywallsAPIKey}`
         },
         body: body
