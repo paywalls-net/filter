@@ -275,15 +275,17 @@ async function cloudflare(config = null) {
 }
 
 
-async function fastly(config) {
-    const paywallsConfig = {
-        paywallsAPIHost: config.get('PAYWALLS_CLOUD_API_HOST') || PAYWALLS_CLOUD_API_HOST,
-        paywallsAPIKey: config.get('PAYWALLS_API_KEY'),
-        paywallsPublisherId: config.get('PAYWALLS_PUBLISHER_ID')
-    };
-    await loadAgentPatterns(paywallsConfig);
+async function fastly() {
 
-    return async function handle(request) {
+    return async function handle(request, config, ctx) {
+        const paywallsConfig = {
+            paywallsAPIHost: config.get('PAYWALLS_CLOUD_API_HOST') || PAYWALLS_CLOUD_API_HOST,
+            paywallsAPIKey: config.get('PAYWALLS_API_KEY'),
+            paywallsPublisherId: config.get('PAYWALLS_PUBLISHER_ID')
+        };
+
+        await loadAgentPatterns(paywallsConfig);
+
         if (await isRecognizedBot(paywallsConfig, request)) {
             const authz = await checkAgentStatus(paywallsConfig, request);
 
