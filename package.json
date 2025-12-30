@@ -3,7 +3,7 @@
   "description": "Client SDK for integrating paywalls.net bot filtering and authorization services into your server or CDN.",
   "author": "paywalls.net",
   "license": "MIT",
-  "version": "1.2.4",
+  "version": "1.3.0",
   "publishConfig": {
     "access": "public"
   },
