@@ -34,10 +34,7 @@ let runtime = detectRuntime();
 let fetchVersion = detectFetchVersion();
 const sdkUserAgent = `pw-filter-sdk/${sdk_version} (${runtime}; fetch/${fetchVersion})`;
 
-async function logAccess(cfg, request, access) {
-    // Separate html from the status in the access object.
-    const { response, ...status } = access;
-
+function getAllHeaders(request) {
     // Get all headers as a plain object (name-value pairs)
     let headers = {};
     if (typeof request.headers.entries === "function") {
@@ -51,6 +48,15 @@ async function logAccess(cfg, request, access) {
             headers[key] = request.headers[key][0]?.value || "";
         }
     }
+    return headers;
+}
+
+async function logAccess(cfg, request, access) {
+    // Separate html from the status in the access object.
+    const { response, ...status } = access;
+
+    // Get all headers as a plain object (name-value pairs)
+    let headers = getAllHeaders(request);
 
     const url = new URL(request.url);
     let body = {
@@ -107,14 +113,15 @@ async function checkAgentStatus(cfg, request) {
             response: { code: 401, html: "Unauthorized access." }
         };
     }
-
+    let headers = getAllHeaders(request);
     const agentInfo = await classifyUserAgent(cfg, userAgent);
 
     const body = JSON.stringify({
         account_id: cfg.paywallsPublisherId,
         operator: agentInfo.operator,
         agent: agentInfo.agent,
-        token: token
+        token: token,
+        headers: headers
     });
 
     const response = await fetch(`${cfg.paywallsAPIHost}/api/filter/agents/auth`, {
