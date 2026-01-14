@@ -51,6 +51,71 @@ function getAllHeaders(request) {
     return headers;
 }
 
+/**
+ * Check if the request is for a VAI endpoint (vai.json or vai.js)
+ * @param {Request} request - The incoming request
+ * @param {string} vaiPath - The path prefix for VAI endpoints (default: '/pw')
+ * @returns {boolean} - True if this is a VAI endpoint request
+ */
+function isVAIRequest(request, vaiPath = '/pw') {
+    try {
+        const url = new URL(request.url || `http://host${request.uri || ''}`);
+        const pathname = url.pathname;
+        return pathname === `${vaiPath}/vai.json` || pathname === `${vaiPath}/vai.js`;
+    } catch (err) {
+        return false;
+    }
+}
+
+/**
+ * Proxy VAI requests to the cloud-api service
+ * @param {Object} cfg - Configuration object with paywallsAPIHost and paywallsAPIKey
+ * @param {Request} request - The incoming request
+ * @returns {Promise<Response>} - The proxied response from cloud-api
+ */
+async function proxyVAIRequest(cfg, request) {
+    try {
+        const url = new URL(request.url || `http://host${request.uri || ''}`);
+        const isJson = url.pathname.endsWith('/vai.json');
+        const cloudApiPath = isJson ? '/pw/vai.json' : '/pw/vai.js';
+        
+        // Get all request headers
+        const headers = getAllHeaders(request);
+        
+        // Build forwarding headers
+        const forwardHeaders = {
+            'User-Agent': headers['user-agent'] || sdkUserAgent,
+            'Authorization': `Bearer ${cfg.paywallsAPIKey}`
+        };
+        
+        // Add forwarding headers if available
+        if (headers['x-forwarded-for']) {
+            forwardHeaders['X-Forwarded-For'] = headers['x-forwarded-for'];
+        } else if (headers['cf-connecting-ip']) {
+            forwardHeaders['X-Forwarded-For'] = headers['cf-connecting-ip'];
+        }
+        
+        if (headers['host']) {
+            forwardHeaders['X-Original-Host'] = headers['host'];
+        }
+        
+        // Forward request to cloud-api
+        const response = await fetch(`${cfg.paywallsAPIHost}${cloudApiPath}`, {
+            method: 'GET',
+            headers: forwardHeaders
+        });
+        
+        if (!response.ok) {
+            console.error(`VAI proxy error: ${response.status} ${response.statusText}`);
+        }
+        
+        return response;
+    } catch (err) {
+        console.error(`Error proxying VAI request: ${err.message}`);
+        return new Response('Internal Server Error', { status: 500 });
+    }
+}
+
 async function logAccess(cfg, request, access) {
     // Separate html from the status in the access object.
     const { response, ...status } = access;
@@ -263,8 +328,15 @@ async function cloudflare(config = null) {
         const paywallsConfig = {
             paywallsAPIHost: env.PAYWALLS_CLOUD_API_HOST || PAYWALLS_CLOUD_API_HOST,
             paywallsAPIKey: env.PAYWALLS_CLOUD_API_KEY,
-            paywallsPublisherId: env.PAYWALLS_PUBLISHER_ID
+            paywallsPublisherId: env.PAYWALLS_PUBLISHER_ID,
+            vaiPath: env.PAYWALLS_VAI_PATH || '/pw'
         };
+        
+        // Check if this is a VAI endpoint request and proxy it
+        if (isVAIRequest(request, paywallsConfig.vaiPath)) {
+            return await proxyVAIRequest(paywallsConfig, request);
+        }
+        
         await loadAgentPatterns(paywallsConfig);
 
         if (await isRecognizedBot(paywallsConfig, request)) {
@@ -288,8 +360,14 @@ async function fastly() {
         const paywallsConfig = {
             paywallsAPIHost: config.get('PAYWALLS_CLOUD_API_HOST') || PAYWALLS_CLOUD_API_HOST,
             paywallsAPIKey: config.get('PAYWALLS_API_KEY'),
-            paywallsPublisherId: config.get('PAYWALLS_PUBLISHER_ID')
+            paywallsPublisherId: config.get('PAYWALLS_PUBLISHER_ID'),
+            vaiPath: config.get('PAYWALLS_VAI_PATH') || '/pw'
         };
+        
+        // Check if this is a VAI endpoint request and proxy it
+        if (isVAIRequest(request, paywallsConfig.vaiPath)) {
+            return await proxyVAIRequest(paywallsConfig, request);
+        }
 
         await loadAgentPatterns(paywallsConfig);
 
@@ -304,6 +382,34 @@ async function fastly() {
         }
     };
 }
+/**
+ * Convert a standard Response to CloudFront format
+ * @param {Response} response - Standard fetch Response object
+ * @returns {Promise<Object>} - CloudFront-formatted response
+ */
+async function responseToCloudFront(response) {
+    const headers = {};
+    
+    // Convert response headers to CloudFront format
+    for (const [key, value] of response.headers.entries()) {
+        headers[key.toLowerCase()] = [
+            {
+                key: key,
+                value: value
+            }
+        ];
+    }
+    
+    const body = await response.text();
+    
+    return {
+        status: response.status,
+        statusDescription: response.statusText || 'OK',
+        headers: headers,
+        body: body
+    };
+}
+
 /**
  * Adapt to CloudFront format
  * Lambda@Edge events see https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/lambda-event-structure.html#lambda-event-structure-request
@@ -336,13 +442,21 @@ async function cloudfront(config) {
     const paywallsConfig = {
         paywallsAPIHost: config.PAYWALLS_CLOUD_API_HOST || PAYWALLS_CLOUD_API_HOST,
         paywallsAPIKey: config.PAYWALLS_API_KEY,
-        paywallsPublisherId: config.PAYWALLS_PUBLISHER_ID
+        paywallsPublisherId: config.PAYWALLS_PUBLISHER_ID,
+        vaiPath: config.PAYWALLS_VAI_PATH || '/pw'
     };
     await loadAgentPatterns(paywallsConfig);
 
     return async function handle(event, ctx) {
         let request = event.Records[0].cf.request;
         request = requestShim(request);
+        
+        // Check if this is a VAI endpoint request and proxy it
+        if (isVAIRequest(request, paywallsConfig.vaiPath)) {
+            const response = await proxyVAIRequest(paywallsConfig, request);
+            return await responseToCloudFront(response);
+        }
+        
         if (await isRecognizedBot(paywallsConfig, request)) {
             const authz = await checkAgentStatus(paywallsConfig, request);
 
