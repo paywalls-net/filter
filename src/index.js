@@ -52,23 +52,36 @@ function getAllHeaders(request) {
 }
 
 /**
- * Check if the request is for a VAI endpoint (vai.json or vai.js)
+ * Check if the request is for a VAI endpoint (vai.json, vai.js, or jwks.json)
  * @param {Request} request - The incoming request
  * @param {string} vaiPath - The path prefix for VAI endpoints (default: '/pw')
  * @returns {boolean} - True if this is a VAI endpoint request
+ */
+/**
+ * Check if request is for a VAI endpoint.
+ * Uses path prefix matching to proxy all /pw/* requests without hardcoding specific endpoints.
+ * This makes the SDK future-proof - new VAI endpoints work automatically without SDK updates.
+ * 
+ * @param {Request} request - The incoming request
+ * @param {string} vaiPath - VAI path prefix (default: '/pw')
+ * @returns {boolean} - True if request should be proxied to cloud-api
  */
 function isVAIRequest(request, vaiPath = '/pw') {
     try {
         const url = new URL(request.url || `http://host${request.uri || ''}`);
         const pathname = url.pathname;
-        return pathname === `${vaiPath}/vai.json` || pathname === `${vaiPath}/vai.js`;
+        // Proxy everything under the VAI path prefix
+        return pathname.startsWith(`${vaiPath}/`);
     } catch (err) {
         return false;
     }
 }
 
 /**
- * Proxy VAI requests to the cloud-api service
+ * Proxy VAI requests to the cloud-api service.
+ * Proxies the entire request path without endpoint-specific logic,
+ * allowing new VAI endpoints to work automatically.
+ * 
  * @param {Object} cfg - Configuration object with paywallsAPIHost and paywallsAPIKey
  * @param {Request} request - The incoming request
  * @returns {Promise<Response>} - The proxied response from cloud-api
@@ -76,8 +89,9 @@ function isVAIRequest(request, vaiPath = '/pw') {
 async function proxyVAIRequest(cfg, request) {
     try {
         const url = new URL(request.url || `http://host${request.uri || ''}`);
-        const isJson = url.pathname.endsWith('/vai.json');
-        const cloudApiPath = isJson ? '/pw/vai.json' : '/pw/vai.js';
+        
+        // Proxy the entire path as-is (path prefix ownership strategy)
+        const cloudApiPath = url.pathname + url.search;
         
         // Get all request headers
         const headers = getAllHeaders(request);
