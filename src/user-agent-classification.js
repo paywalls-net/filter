@@ -63,12 +63,23 @@ export async function loadAgentPatterns(cfg) {
             throw new Error(`Failed to fetch agent patterns: ${response.status} ${response.statusText}`);
         }
 
-        const serializedPatterns = await response.json();
+        const data = await response.json();
+
+        // Handle v2 envelope ({ version: 2, patterns: [...] }) or v1 flat array
+        const serializedPatterns = (data && data.version === 2 && Array.isArray(data.patterns))
+            ? data.patterns
+            : Array.isArray(data) ? data : [];
 
         // Deserialize RegExp strings back into RegExp objects
+        // Format: "/pattern/flags" — extract pattern and flags separately
         cachedUserAgentPatterns = serializedPatterns.map((pattern) => ({
             ...pattern,
-            patterns: pattern.patterns.map((regexString) => new RegExp(regexString.slice(1, -1))) // Remove leading and trailing slashes
+            patterns: pattern.patterns.map((regexString) => {
+                const lastSlash = regexString.lastIndexOf('/');
+                const pattern = regexString.slice(1, lastSlash);
+                const flags = regexString.slice(lastSlash + 1);
+                return new RegExp(pattern, flags);
+            })
         }));
 
         cacheTimestamp = now;
@@ -114,6 +125,10 @@ export async function classifyUserAgent(cfg, userAgent) {
                     agent: config.agent || browser,
                     usage: config.usage,
                     user_initiated: config.user_initiated,
+                    purpose: config.purpose,
+                    purpose_mode: config.purpose_mode,
+                    vat: config.vat,
+                    act: config.act,
                     browser,
                     os,
                 };
@@ -126,7 +141,9 @@ export async function classifyUserAgent(cfg, userAgent) {
 
     const result = {
         browser,
-        os
+        os,
+        vat: 'HUMAN',
+        act: 'ACT-3',
     };
     // Cache the default classification
     classificationCache.set(userAgent, result);

@@ -199,6 +199,8 @@ async function checkAgentStatus(cfg, request) {
         account_id: cfg.paywallsPublisherId,
         operator: agentInfo.operator,
         agent: agentInfo.agent,
+        vat: agentInfo.vat,
+        act: agentInfo.act,
         token: token,
         headers: headers
     });
@@ -262,7 +264,8 @@ function isTestBot(request) {
 async function isPaywallsKnownBot(cfg, request) {
     const userAgent = request.headers.get("User-Agent");
     const uaClassification = await classifyUserAgent(cfg, userAgent);
-    return uaClassification.operator && uaClassification.agent;
+    // Classified as non-human by pattern match, or has known operator/agent
+    return (uaClassification.vat && uaClassification.vat !== 'HUMAN') || (uaClassification.operator && uaClassification.agent);
 }
 
 async function isRecognizedBot(cfg, request) {
