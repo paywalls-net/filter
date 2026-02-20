@@ -143,7 +143,7 @@ export async function classifyUserAgent(cfg, userAgent) {
         browser,
         os,
         vat: 'HUMAN',
-        act: 'ACT-3',
+        act: 'ACT-2',  // Unmatched UA with detected browser — medium confidence
     };
     // Cache the default classification
     classificationCache.set(userAgent, result);
