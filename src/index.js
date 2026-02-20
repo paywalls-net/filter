@@ -193,14 +193,10 @@ async function checkAgentStatus(cfg, request) {
         };
     }
     let headers = getAllHeaders(request);
-    const agentInfo = await classifyUserAgent(cfg, userAgent);
 
     const body = JSON.stringify({
         account_id: cfg.paywallsPublisherId,
-        operator: agentInfo.operator,
-        agent: agentInfo.agent,
-        vat: agentInfo.vat,
-        act: agentInfo.act,
+        user_agent: userAgent,
         token: token,
         headers: headers
     });
