@@ -104,10 +104,10 @@ export async function classifyUserAgent(cfg, userAgent) {
     // Check classification cache first (single lookup is more efficient than has + get)
     const cached = classificationCache.get(userAgent);
     if (cached !== undefined) {
-        console.log(`User agent classification cache hit for: ${userAgent}`);
+        // console.log(`User agent classification cache hit for: ${userAgent}`);
         return cached;
     }
-    console.log(`User agent classification cache miss for: ${userAgent}`);
+    // console.log(`User agent classification cache miss for: ${userAgent}`);
 
     const parsedUA = new UAParser(userAgent).getResult();
 
