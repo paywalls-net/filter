@@ -113,9 +113,17 @@ async function proxyVAIRequest(cfg, request) {
             forwardHeaders['X-Original-Host'] = headers['host'];
         }
         
+        // Forward browser Origin via custom header for CORS evaluation (§5).
+        // Using X-Forwarded-Origin because wrangler dev mangles the standard
+        // Origin header with port-stacking when proxying between local workers.
+        const browserOrigin = headers['origin'] || null;
+        if (browserOrigin) {
+            forwardHeaders['X-Forwarded-Origin'] = browserOrigin;
+        }
+        
         // Forward request to cloud-api
         const response = await fetch(`${cfg.paywallsAPIHost}${cloudApiPath}`, {
-            method: 'GET',
+            method: request.method || 'GET',
             headers: forwardHeaders
         });
         
@@ -123,7 +131,19 @@ async function proxyVAIRequest(cfg, request) {
             console.error(`VAI proxy error: ${response.status} ${response.statusText}`);
         }
         
-        return response;
+        // Build response, fixing CORS headers that wrangler dev may mangle.
+        // The cloud-api sets Access-Control-Allow-Origin to the browser's origin
+        // (via X-Forwarded-Origin), but wrangler can corrupt the value on the
+        // return path too.  Re-stamp it with the captured browser origin.
+        const responseHeaders = new Headers(response.headers);
+        if (browserOrigin && responseHeaders.has('Access-Control-Allow-Origin')) {
+            responseHeaders.set('Access-Control-Allow-Origin', browserOrigin);
+        }
+        return new Response(response.body, {
+            status: response.status,
+            statusText: response.statusText,
+            headers: responseHeaders
+        });
     } catch (err) {
         console.error(`Error proxying VAI request: ${err.message}`);
         return new Response('Internal Server Error', { status: 500 });
