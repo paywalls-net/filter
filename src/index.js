@@ -78,9 +78,24 @@ function isVAIRequest(request, vaiPath = '/pw') {
 }
 
 /**
- * Proxy VAI requests to the cloud-api service.
- * Proxies the entire request path without endpoint-specific logic,
- * allowing new VAI endpoints to work automatically.
+ * Proxy VAI requests to the cloud-api service (Spec §7).
+ * 
+ * Transparent passthrough: cloud-api is authoritative for CORS, domain auth,
+ * and security headers.  This proxy must NOT inject or modify CORS headers.
+ * 
+ * Header forwarding (§7.2):
+ *  - X-Forwarded-Origin: browser Origin (Cloudflare Workers control the
+ *    outbound Origin header, so we relay via a custom header)
+ *  - X-Original-Host: publisher hostname for domain binding
+ *  - Access-Control-Request-Method/Headers: for preflight evaluation
+ *  - Cookie: for session/identity context
+ *  - User-Agent, X-Forwarded-For: standard proxy headers
+ *  - Authorization: publisher API key (§7.4)
+ * 
+ * Response passthrough (§7.3):
+ *  All response headers from cloud-api are returned unchanged — including
+ *  Access-Control-*, Vary, Cache-Control.  The proxy never injects or
+ *  re-stamps CORS headers.
  * 
  * @param {Object} cfg - Configuration object with paywallsAPIHost and paywallsAPIKey
  * @param {Request} request - The incoming request
@@ -96,29 +111,45 @@ async function proxyVAIRequest(cfg, request) {
         // Get all request headers
         const headers = getAllHeaders(request);
         
-        // Build forwarding headers
+        // Build forwarding headers — include everything cloud-api needs
+        // for CORS evaluation, domain auth, and request context.
         const forwardHeaders = {
             'User-Agent': headers['user-agent'] || sdkUserAgent,
             'Authorization': `Bearer ${cfg.paywallsAPIKey}`
         };
         
-        // Add forwarding headers if available
+        // Client IP forwarding
         if (headers['x-forwarded-for']) {
             forwardHeaders['X-Forwarded-For'] = headers['x-forwarded-for'];
         } else if (headers['cf-connecting-ip']) {
             forwardHeaders['X-Forwarded-For'] = headers['cf-connecting-ip'];
         }
         
+        // Publisher hostname for domain binding (§7.2, §4)
+        // Cloud-api gates reading this on the vai_forwarded_host feature flag.
         if (headers['host']) {
             forwardHeaders['X-Original-Host'] = headers['host'];
         }
         
-        // Forward browser Origin via custom header for CORS evaluation (§5).
-        // Using X-Forwarded-Origin because wrangler dev mangles the standard
-        // Origin header with port-stacking when proxying between local workers.
-        const browserOrigin = headers['origin'] || null;
-        if (browserOrigin) {
-            forwardHeaders['X-Forwarded-Origin'] = browserOrigin;
+        // Forward browser Origin via custom header for CORS evaluation (§5, §7.2).
+        // Cloudflare Workers runtime controls the outbound Origin header on fetch(),
+        // so we relay the browser's Origin via X-Forwarded-Origin.  Cloud-api's
+        // evaluateCORS() reads this to make the authoritative CORS decision.
+        if (headers['origin']) {
+            forwardHeaders['X-Forwarded-Origin'] = headers['origin'];
+        }
+        
+        // Forward preflight headers so cloud-api can evaluate OPTIONS (§5.4, §7.2)
+        if (headers['access-control-request-method']) {
+            forwardHeaders['Access-Control-Request-Method'] = headers['access-control-request-method'];
+        }
+        if (headers['access-control-request-headers']) {
+            forwardHeaders['Access-Control-Request-Headers'] = headers['access-control-request-headers'];
+        }
+        
+        // Forward cookies for session/identity context (§7.2)
+        if (headers['cookie']) {
+            forwardHeaders['Cookie'] = headers['cookie'];
         }
         
         // Forward request to cloud-api
@@ -131,18 +162,12 @@ async function proxyVAIRequest(cfg, request) {
             console.error(`VAI proxy error: ${response.status} ${response.statusText}`);
         }
         
-        // Build response, fixing CORS headers that wrangler dev may mangle.
-        // The cloud-api sets Access-Control-Allow-Origin to the browser's origin
-        // (via X-Forwarded-Origin), but wrangler can corrupt the value on the
-        // return path too.  Re-stamp it with the captured browser origin.
-        const responseHeaders = new Headers(response.headers);
-        if (browserOrigin && responseHeaders.has('Access-Control-Allow-Origin')) {
-            responseHeaders.set('Access-Control-Allow-Origin', browserOrigin);
-        }
+        // Transparent passthrough (§7.3): return cloud-api response unchanged.
+        // Cloud-api is authoritative for CORS headers — do not re-stamp or inject.
         return new Response(response.body, {
             status: response.status,
             statusText: response.statusText,
-            headers: responseHeaders
+            headers: response.headers
         });
     } catch (err) {
         console.error(`Error proxying VAI request: ${err.message}`);
