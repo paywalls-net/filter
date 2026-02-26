@@ -142,6 +142,8 @@ export async function classifyUserAgent(cfg, userAgent) {
     const result = {
         browser,
         os,
+        purpose: 'other',
+        purpose_mode: ['other'],
         vat: 'HUMAN',
         act: 'ACT-2',  // Unmatched UA with detected browser — medium confidence
     };
