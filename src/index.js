@@ -78,6 +78,42 @@ function isVAIRequest(request, vaiPath = '/pw') {
 }
 
 /**
+ * Clean 1:1 header forwarding map for operational proxy headers (§7.2).
+ * Each entry: { src: string (lowercase incoming), dest: string (outgoing) }
+ * Headers with fallback logic or multi-source derivation are handled separately.
+ */
+const PROXY_HEADER_MAP = [
+    { src: 'host',                          dest: 'X-Original-Host'                  }, // publisher hostname for domain binding
+    { src: 'origin',                        dest: 'X-Forwarded-Origin'               }, // relay for CORS evaluation (§5, §7.2)
+    { src: 'access-control-request-method', dest: 'Access-Control-Request-Method'    }, // preflight (§5.4)
+    { src: 'access-control-request-headers',dest: 'Access-Control-Request-Headers'   }, // preflight (§5.4)
+    { src: 'cookie',                        dest: 'Cookie'                           }, // session/identity context
+];
+
+/**
+ * Maps browser signal sources → X-PW-* forwarding headers (§5.2).
+ * Each entry: { from: 'headers'|'cf', src: string, dest: string }
+ *   from:'headers' — read from incoming request headers (lowercase)
+ *   from:'cf'      — read from request.cf property
+ */
+const SIGNAL_HEADER_MAP = [
+    // Bundle A: Sec-Fetch (3 pts)
+    { from: 'headers', src: 'sec-fetch-dest',  dest: 'X-PW-Sec-Fetch-Dest'  },
+    { from: 'headers', src: 'sec-fetch-mode',  dest: 'X-PW-Sec-Fetch-Mode'  },
+    { from: 'headers', src: 'sec-fetch-site',  dest: 'X-PW-Sec-Fetch-Site'  },
+    // Bundle B: Accept (2 pts)
+    { from: 'headers', src: 'accept',          dest: 'X-PW-Accept'          },
+    { from: 'headers', src: 'accept-language', dest: 'X-PW-Accept-Language' },
+    { from: 'headers', src: 'accept-encoding', dest: 'X-PW-Accept-Encoding' },
+    // Bundle C: Client Hints (2 pts)
+    { from: 'headers', src: 'sec-ch-ua',       dest: 'X-PW-Sec-CH-UA'       },
+    // Bundle D: CF infrastructure (1 pt) — only valid at first-hop CF Worker
+    { from: 'cf',      src: 'tlsVersion',      dest: 'X-PW-TLS-Version'     },
+    { from: 'cf',      src: 'httpProtocol',    dest: 'X-PW-HTTP-Protocol'   },
+    { from: 'cf',      src: 'asn',             dest: 'X-PW-ASN'             },
+];
+
+/**
  * Proxy VAI requests to the cloud-api service (Spec §7).
  * 
  * Transparent passthrough: cloud-api is authoritative for CORS, domain auth,
@@ -91,6 +127,11 @@ function isVAIRequest(request, vaiPath = '/pw') {
  *  - Cookie: for session/identity context
  *  - User-Agent, X-Forwarded-For: standard proxy headers
  *  - Authorization: publisher API key (§7.4)
+ * 
+ * Human-confidence signal forwarding (§5.2):
+ *  Driven by SIGNAL_HEADER_MAP — each entry specifies a source ('headers' or 'cf')
+ *  and property name to read, and the X-PW-* destination header to write.
+ *  Simple passthrough: present values forwarded, absent values omitted.
  * 
  * Response passthrough (§7.3):
  *  All response headers from cloud-api are returned unchanged — including
@@ -118,40 +159,29 @@ async function proxyVAIRequest(cfg, request) {
             'Authorization': `Bearer ${cfg.paywallsAPIKey}`
         };
         
-        // Client IP forwarding
+        // Client IP forwarding — dual-source, so handled explicitly
         if (headers['x-forwarded-for']) {
             forwardHeaders['X-Forwarded-For'] = headers['x-forwarded-for'];
         } else if (headers['cf-connecting-ip']) {
             forwardHeaders['X-Forwarded-For'] = headers['cf-connecting-ip'];
         }
-        
-        // Publisher hostname for domain binding (§7.2, §4)
-        // Cloud-api gates reading this on the vai_forwarded_host feature flag.
-        if (headers['host']) {
-            forwardHeaders['X-Original-Host'] = headers['host'];
+
+        // Clean 1:1 operational header forwarding (§7.2)
+        for (const { src, dest } of PROXY_HEADER_MAP) {
+            if (headers[src]) forwardHeaders[dest] = headers[src];
         }
-        
-        // Forward browser Origin via custom header for CORS evaluation (§5, §7.2).
-        // Cloudflare Workers runtime controls the outbound Origin header on fetch(),
-        // so we relay the browser's Origin via X-Forwarded-Origin.  Cloud-api's
-        // evaluateCORS() reads this to make the authoritative CORS decision.
-        if (headers['origin']) {
-            forwardHeaders['X-Forwarded-Origin'] = headers['origin'];
+
+        // Forward browser-provenance signals as X-PW-* headers (§5.2).
+        // Simple passthrough: forward whatever is present, no cross-request state.
+        const cf = request.cf || {};
+        const sources = { headers, cf };
+        for (const { from, src, dest } of SIGNAL_HEADER_MAP) {
+            const value = sources[from][src];
+            if (value != null && value !== '') {
+                forwardHeaders[dest] = String(value);
+            }
         }
-        
-        // Forward preflight headers so cloud-api can evaluate OPTIONS (§5.4, §7.2)
-        if (headers['access-control-request-method']) {
-            forwardHeaders['Access-Control-Request-Method'] = headers['access-control-request-method'];
-        }
-        if (headers['access-control-request-headers']) {
-            forwardHeaders['Access-Control-Request-Headers'] = headers['access-control-request-headers'];
-        }
-        
-        // Forward cookies for session/identity context (§7.2)
-        if (headers['cookie']) {
-            forwardHeaders['Cookie'] = headers['cookie'];
-        }
-        
+
         // Forward request to cloud-api
         const response = await fetch(`${cfg.paywallsAPIHost}${cloudApiPath}`, {
             method: request.method || 'GET',
