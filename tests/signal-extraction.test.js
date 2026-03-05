@@ -1,7 +1,7 @@
 /**
- * Unit tests for Tier 2 signal extraction functions
+ * Unit tests for signal extraction functions (Tier 2 + Tier 3)
  *
- * Spec: specs/vai-privacy-v2.spec.md §6.2.1–§6.2.5
+ * Spec: specs/vai-privacy-v2.spec.md §6.2–§6.4
  */
 import {
   extractAcceptFeatures,
@@ -9,6 +9,9 @@ import {
   extractLanguageFeatures,
   extractNetFeatures,
   extractCHFeatures,
+  extractUAFeatures,
+  computeUAHMAC,
+  computeCTFingerprint,
 } from '../src/signal-extraction.js';
 
 // ── §6.2.1  extractAcceptFeatures ──────────────────────────────────────────
@@ -206,5 +209,201 @@ describe('extractCHFeatures', () => {
     const edgeUA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/134.0.0.0 Safari/537.36 Edg/134.0.0.0';
     expect(extractCHFeatures(edgeCH, edgeUA))
       .toBe('present, brands=3, grease, consistent');
+  });
+});
+
+// ── §6.3.1  extractUAFeatures ──────────────────────────────────────────────
+
+describe('extractUAFeatures', () => {
+  const CHROME_MAC = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36';
+  const FIREFOX_WIN = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:134.0) Gecko/20100101 Firefox/134.0';
+  const SAFARI_IOS = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1';
+  const EDGE_WIN = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36 Edg/134.0.0.0';
+  const CURL = 'curl/7.88.1';
+  const HEADLESS_CHROME = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/134.0.0.0 Safari/537.36';
+  const PUPPETEER = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/134.0.0.0 Safari/537.36 Puppeteer';
+  const GOOGLEBOT = 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)';
+
+  // ── dpf compound token ─────────────────────────────────────────────────
+  test('Chrome on Mac → desktop/mac/chrome', () => {
+    expect(extractUAFeatures(CHROME_MAC)).toMatch(/^dpf=desktop\/mac\/chrome/);
+  });
+
+  test('Firefox on Windows → desktop/windows/firefox', () => {
+    expect(extractUAFeatures(FIREFOX_WIN)).toMatch(/^dpf=desktop\/windows\/firefox/);
+  });
+
+  test('Safari on iPhone → mobile/ios/safari', () => {
+    expect(extractUAFeatures(SAFARI_IOS)).toMatch(/^dpf=mobile\/ios\/safari/);
+  });
+
+  test('Edge on Windows → desktop/windows/edge', () => {
+    expect(extractUAFeatures(EDGE_WIN)).toMatch(/^dpf=desktop\/windows\/edge/);
+  });
+
+  test('curl → unknown/other/other', () => {
+    expect(extractUAFeatures(CURL)).toMatch(/^dpf=unknown\/other\/other/);
+  });
+
+  test('HeadlessChrome → desktop/linux/chrome', () => {
+    expect(extractUAFeatures(HEADLESS_CHROME)).toMatch(/^dpf=desktop\/linux\/chrome/);
+  });
+
+  test('Googlebot → server device, bot family', () => {
+    expect(extractUAFeatures(GOOGLEBOT)).toMatch(/dpf=server\/other\/bot/);
+  });
+
+  // ── version bucketing ──────────────────────────────────────────────────
+  test('Chrome 134 → ver=120-139', () => {
+    expect(extractUAFeatures(CHROME_MAC)).toMatch(/ver=120-139/);
+  });
+
+  test('curl/7.88.1 → ver=0-79', () => {
+    expect(extractUAFeatures(CURL)).toMatch(/ver=0-79/);
+  });
+
+  // ── browser flag ───────────────────────────────────────────────────────
+  test('Mozilla/ prefix → browser flag present', () => {
+    expect(extractUAFeatures(CHROME_MAC)).toMatch(/\bbrowser\b/);
+  });
+
+  test('curl → no browser flag', () => {
+    expect(extractUAFeatures(CURL)).not.toMatch(/\bbrowser\b/);
+  });
+
+  // ── headless / automation ──────────────────────────────────────────────
+  test('HeadlessChrome → headless flag', () => {
+    expect(extractUAFeatures(HEADLESS_CHROME)).toMatch(/\bheadless\b/);
+  });
+
+  test('Puppeteer → both headless and automation', () => {
+    const result = extractUAFeatures(PUPPETEER);
+    expect(result).toMatch(/\bheadless\b/);
+    expect(result).toMatch(/\bautomation\b/);
+  });
+
+  test('python-requests → automation', () => {
+    expect(extractUAFeatures('python-requests/2.31.0')).toMatch(/\bautomation\b/);
+  });
+
+  test('Selenium → automation', () => {
+    expect(extractUAFeatures('Mozilla/5.0 Selenium/4.0')).toMatch(/\bautomation\b/);
+  });
+
+  test('normal Chrome → no headless or automation', () => {
+    const result = extractUAFeatures(CHROME_MAC);
+    expect(result).not.toMatch(/\bheadless\b/);
+    expect(result).not.toMatch(/\bautomation\b/);
+  });
+
+  // ── entropy ────────────────────────────────────────────────────────────
+  test('normal browser UA → entropy=medium', () => {
+    expect(extractUAFeatures(CHROME_MAC)).toMatch(/entropy=medium/);
+  });
+
+  test('curl (short) → entropy=low', () => {
+    expect(extractUAFeatures(CURL)).toMatch(/entropy=low/);
+  });
+
+  // ── null/empty ─────────────────────────────────────────────────────────
+  test('null → null', () => {
+    expect(extractUAFeatures(null)).toBeNull();
+  });
+
+  test('empty string → null', () => {
+    expect(extractUAFeatures('')).toBeNull();
+  });
+
+  // ── spec Appendix B examples ───────────────────────────────────────────
+  test('spec example: Chrome on Mac', () => {
+    expect(extractUAFeatures(CHROME_MAC))
+      .toBe('dpf=desktop/mac/chrome, ver=120-139, browser, entropy=medium');
+  });
+
+  test('spec example: HeadlessChrome', () => {
+    expect(extractUAFeatures(HEADLESS_CHROME))
+      .toBe('dpf=desktop/linux/chrome, ver=120-139, browser, headless, entropy=medium');
+  });
+
+  test('spec example: Puppeteer', () => {
+    expect(extractUAFeatures(PUPPETEER))
+      .toBe('dpf=desktop/linux/chrome, ver=120-139, browser, headless, automation, entropy=medium');
+  });
+});
+
+// ── §6.3.2  computeUAHMAC ──────────────────────────────────────────────────
+
+describe('computeUAHMAC', () => {
+  const TEST_UA  = 'Mozilla/5.0 Chrome/134.0.0.0';
+  const TEST_KEY = 'test-hmac-secret-key';
+
+  test('returns RFC 8941 Byte Sequence format (:base64:)', async () => {
+    const result = await computeUAHMAC(TEST_UA, TEST_KEY);
+    expect(result).toMatch(/^:[A-Za-z0-9+/]+=*:$/);
+  });
+
+  test('deterministic — same input produces same output', async () => {
+    const a = await computeUAHMAC(TEST_UA, TEST_KEY);
+    const b = await computeUAHMAC(TEST_UA, TEST_KEY);
+    expect(a).toBe(b);
+  });
+
+  test('different UA → different HMAC', async () => {
+    const a = await computeUAHMAC(TEST_UA, TEST_KEY);
+    const b = await computeUAHMAC('curl/7.88.1', TEST_KEY);
+    expect(a).not.toBe(b);
+  });
+
+  test('different key → different HMAC', async () => {
+    const a = await computeUAHMAC(TEST_UA, TEST_KEY);
+    const b = await computeUAHMAC(TEST_UA, 'different-key');
+    expect(a).not.toBe(b);
+  });
+
+  test('null UA → null', async () => {
+    expect(await computeUAHMAC(null, TEST_KEY)).toBeNull();
+  });
+
+  test('null key → null', async () => {
+    expect(await computeUAHMAC(TEST_UA, null)).toBeNull();
+  });
+
+  test('empty UA → null', async () => {
+    expect(await computeUAHMAC('', TEST_KEY)).toBeNull();
+  });
+});
+
+// ── §6.4  computeCTFingerprint ─────────────────────────────────────────────
+
+describe('computeCTFingerprint', () => {
+  const TEST_UA   = 'Mozilla/5.0 Chrome/134.0.0.0';
+  const TEST_LANG = 'en-US,en;q=0.9';
+  const TEST_CH   = '"Google Chrome";v="134"';
+
+  test('returns 8-char hex string', async () => {
+    const fp = await computeCTFingerprint(TEST_UA, TEST_LANG, TEST_CH);
+    expect(fp).toMatch(/^[0-9a-f]{8}$/);
+  });
+
+  test('deterministic — same inputs produce same output', async () => {
+    const a = await computeCTFingerprint(TEST_UA, TEST_LANG, TEST_CH);
+    const b = await computeCTFingerprint(TEST_UA, TEST_LANG, TEST_CH);
+    expect(a).toBe(b);
+  });
+
+  test('different UA → different fingerprint', async () => {
+    const a = await computeCTFingerprint(TEST_UA, TEST_LANG, TEST_CH);
+    const b = await computeCTFingerprint('curl/7.88.1', TEST_LANG, TEST_CH);
+    expect(a).not.toBe(b);
+  });
+
+  test('null inputs treated as empty strings (still produces fp)', async () => {
+    const fp = await computeCTFingerprint(null, null, null);
+    expect(fp).toMatch(/^[0-9a-f]{8}$/);
+  });
+
+  test('partial inputs work (missing lang/ch)', async () => {
+    const fp = await computeCTFingerprint(TEST_UA, null, null);
+    expect(fp).toMatch(/^[0-9a-f]{8}$/);
   });
 });
