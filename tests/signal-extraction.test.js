@@ -12,7 +12,7 @@ import {
   extractCHFeatures,
   extractUAFeatures,
   computeUAHMAC,
-  computeCTFingerprint,
+  computeConfidenceToken,
 } from '../src/signal-extraction.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -569,56 +569,56 @@ describe('computeUAHMAC', () => {
   });
 });
 
-// ── §6.4  computeCTFingerprint ─────────────────────────────────────────────
+// ── §6.4  computeConfidenceToken ───────────────────────────────────────────
 
-describe('computeCTFingerprint', () => {
+describe('computeConfidenceToken', () => {
   const TEST_UA   = 'Mozilla/5.0 Chrome/134.0.0.0';
   const TEST_LANG = 'en-US,en;q=0.9';
   const TEST_CH   = '"Google Chrome";v="134"';
 
   test('returns 8-char hex string', async () => {
-    const fp = await computeCTFingerprint(TEST_UA, TEST_LANG, TEST_CH);
-    expect(fp).toMatch(/^[0-9a-f]{8}$/);
+    const ct = await computeConfidenceToken(TEST_UA, TEST_LANG, TEST_CH);
+    expect(ct).toMatch(/^[0-9a-f]{8}$/);
   });
 
   test('deterministic — same inputs produce same output', async () => {
-    const a = await computeCTFingerprint(TEST_UA, TEST_LANG, TEST_CH);
-    const b = await computeCTFingerprint(TEST_UA, TEST_LANG, TEST_CH);
+    const a = await computeConfidenceToken(TEST_UA, TEST_LANG, TEST_CH);
+    const b = await computeConfidenceToken(TEST_UA, TEST_LANG, TEST_CH);
     expect(a).toBe(b);
   });
 
-  test('different UA → different fingerprint', async () => {
-    const a = await computeCTFingerprint(TEST_UA, TEST_LANG, TEST_CH);
-    const b = await computeCTFingerprint('curl/7.88.1', TEST_LANG, TEST_CH);
+  test('different UA → different token', async () => {
+    const a = await computeConfidenceToken(TEST_UA, TEST_LANG, TEST_CH);
+    const b = await computeConfidenceToken('curl/7.88.1', TEST_LANG, TEST_CH);
     expect(a).not.toBe(b);
   });
 
-  test('different language → different fingerprint', async () => {
-    const a = await computeCTFingerprint(TEST_UA, 'en-US', TEST_CH);
-    const b = await computeCTFingerprint(TEST_UA, 'fr-FR', TEST_CH);
+  test('different language → different token', async () => {
+    const a = await computeConfidenceToken(TEST_UA, 'en-US', TEST_CH);
+    const b = await computeConfidenceToken(TEST_UA, 'fr-FR', TEST_CH);
     expect(a).not.toBe(b);
   });
 
-  test('different CH → different fingerprint', async () => {
-    const a = await computeCTFingerprint(TEST_UA, TEST_LANG, '"Chrome";v="134"');
-    const b = await computeCTFingerprint(TEST_UA, TEST_LANG, '"Chrome";v="120"');
+  test('different CH → different token', async () => {
+    const a = await computeConfidenceToken(TEST_UA, TEST_LANG, '"Chrome";v="134"');
+    const b = await computeConfidenceToken(TEST_UA, TEST_LANG, '"Chrome";v="120"');
     expect(a).not.toBe(b);
   });
 
-  test('null inputs treated as empty strings (still produces fp)', async () => {
-    const fp = await computeCTFingerprint(null, null, null);
-    expect(fp).toMatch(/^[0-9a-f]{8}$/);
+  test('null inputs treated as empty strings (still produces token)', async () => {
+    const ct = await computeConfidenceToken(null, null, null);
+    expect(ct).toMatch(/^[0-9a-f]{8}$/);
   });
 
   test('partial inputs work (missing lang/ch)', async () => {
-    const fp = await computeCTFingerprint(TEST_UA, null, null);
-    expect(fp).toMatch(/^[0-9a-f]{8}$/);
+    const ct = await computeConfidenceToken(TEST_UA, null, null);
+    expect(ct).toMatch(/^[0-9a-f]{8}$/);
   });
 
   test('order of concatenation matters (UA+lang+CH ≠ lang+UA+CH)', async () => {
-    // Swapping inputs should produce different fingerprints
-    const a = await computeCTFingerprint('A', 'B', 'C');
-    const b = await computeCTFingerprint('B', 'A', 'C');
+    // Swapping inputs should produce different tokens
+    const a = await computeConfidenceToken('A', 'B', 'C');
+    const b = await computeConfidenceToken('B', 'A', 'C');
     expect(a).not.toBe(b);
   });
 });

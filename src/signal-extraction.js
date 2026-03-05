@@ -185,7 +185,7 @@ export function extractCHFeatures(secChUA, userAgent) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  Tier 3 — Replace User-Agent with derived features (§6.3) + CT FP (§6.4)
+//  Tier 3 — Replace User-Agent with derived features (§6.3) + CT (§6.4)
 // ═══════════════════════════════════════════════════════════════════════════
 
 // ── §6.3.3  Automation marker detection ────────────────────────────────────
@@ -360,10 +360,10 @@ export async function computeUAHMAC(userAgent, hmacKey) {
   return `:${b64}:`;
 }
 
-// ── §6.4  computeCTFingerprint ─────────────────────────────────────────────
+// ── §6.4  computeConfidenceToken ───────────────────────────────────────────
 /**
- * Compute the confidence-token fingerprint.
- * fp = SHA-256(userAgent + acceptLanguage + secChUA)[0:8] hex
+ * Compute the confidence token.
+ * ct = SHA-256(userAgent + acceptLanguage + secChUA)[0:8] hex
  *
  * Matches the logic in cloud-api computeConfidenceFingerprint().
  *
@@ -372,7 +372,7 @@ export async function computeUAHMAC(userAgent, hmacKey) {
  * @param {string|null|undefined} secChUA         Raw Sec-CH-UA
  * @returns {Promise<string>}  8-char hex token, never null
  */
-export async function computeCTFingerprint(userAgent, acceptLanguage, secChUA) {
+export async function computeConfidenceToken(userAgent, acceptLanguage, secChUA) {
   const ua   = userAgent || '';
   const lang = acceptLanguage || '';
   const ch   = secChUA || '';
