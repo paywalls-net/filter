@@ -2,6 +2,7 @@
  * Unit tests for signal extraction functions (Tier 2 + Tier 3)
  *
  * Spec: specs/vai-privacy-v2.spec.md §6.2–§6.4
+ * Issue: paywalls-site-drk
  */
 import {
   extractAcceptFeatures,
@@ -13,6 +14,44 @@ import {
   computeUAHMAC,
   computeCTFingerprint,
 } from '../src/signal-extraction.js';
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Helpers: SF-Dictionary format validation (RFC 8941)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Validate that a string is well-formed SF-Dictionary per our protocol.
+ *
+ * Strict RFC 8941 allows only alpha-starting tokens and plain integers.
+ * Our protocol extends this with:
+ *   - Compound path values: dpf=desktop/mac/chrome
+ *   - Version ranges:       ver=120-139, ver=140+
+ *
+ * Each member is either a bare key (boolean true) or key=value.
+ *   - key matches sf-key = lcalpha *( lcalpha / DIGIT / "_" / "-" / "." / "*" )
+ *   - value is alphanumeric-starting string with path/range chars
+ * Members are separated by ", ".
+ */
+function isValidSFDictionary(str) {
+  if (typeof str !== 'string' || str.length === 0) return false;
+  const members = str.split(', ');
+  const keyRe = /^[a-z*][a-z0-9_\-.*]*$/;
+  // Extended value: starts with alphanumeric/*, allows tchar + / and digits
+  const valRe = /^[A-Za-z0-9*][A-Za-z0-9!#$&'*+.^_|~\/-]*$/;
+  for (const m of members) {
+    const eq = m.indexOf('=');
+    if (eq === -1) {
+      // bare key (boolean true)
+      if (!keyRe.test(m)) return false;
+    } else {
+      const key = m.slice(0, eq);
+      const val = m.slice(eq + 1);
+      if (!keyRe.test(key)) return false;
+      if (!valRe.test(val)) return false;
+    }
+  }
+  return true;
+}
 
 // ── §6.2.1  extractAcceptFeatures ──────────────────────────────────────────
 
@@ -55,6 +94,11 @@ describe('extractAcceptFeatures', () => {
   test('unrecognized type only → null', () => {
     expect(extractAcceptFeatures('application/xml')).toBeNull();
   });
+
+  test('output is valid SF-Dictionary', () => {
+    const result = extractAcceptFeatures('text/html,application/json,*/*;q=0.8');
+    expect(isValidSFDictionary(result)).toBe(true);
+  });
 });
 
 // ── §6.2.2  extractEncodingFeatures ────────────────────────────────────────
@@ -84,6 +128,15 @@ describe('extractEncodingFeatures', () => {
   test('deflate only (no br/gzip) → null', () => {
     expect(extractEncodingFeatures('deflate')).toBeNull();
   });
+
+  test('zstd alone (no br/gzip) → null (not yet a tracked feature)', () => {
+    expect(extractEncodingFeatures('zstd')).toBeNull();
+  });
+
+  test('output is valid SF-Dictionary', () => {
+    const result = extractEncodingFeatures('gzip, deflate, br');
+    expect(isValidSFDictionary(result)).toBe(true);
+  });
 });
 
 // ── §6.2.3  extractLanguageFeatures ────────────────────────────────────────
@@ -104,6 +157,9 @@ describe('extractLanguageFeatures', () => {
       .toBe('present, primary=fr, count=1');
   });
 
+  // NOTE: Test matrix suggests * → present, primary=other, count=1.
+  // Current implementation returns null (wildcard is not a useful locale
+  // for privacy classification). If spec intent changes, update here.
   test('wildcard only → null (not a real locale)', () => {
     expect(extractLanguageFeatures('*')).toBeNull();
   });
@@ -123,6 +179,21 @@ describe('extractLanguageFeatures', () => {
   test('Chinese locale → primary=zh', () => {
     expect(extractLanguageFeatures('zh-CN,zh;q=0.9,en;q=0.8'))
       .toBe('present, primary=zh, count=3');
+  });
+
+  test('many locales → count reflects total', () => {
+    expect(extractLanguageFeatures('en-US,en;q=0.9,fr;q=0.8,de;q=0.7,es;q=0.6,pt;q=0.5'))
+      .toBe('present, primary=en, count=6');
+  });
+
+  test('three-letter language code → first 2 chars', () => {
+    // "tlh" (Klingon) → primary=tl
+    expect(extractLanguageFeatures('tlh')).toBe('present, primary=tl, count=1');
+  });
+
+  test('output is valid SF-Dictionary', () => {
+    const result = extractLanguageFeatures('en-US,en;q=0.9');
+    expect(isValidSFDictionary(result)).toBe(true);
   });
 });
 
@@ -159,8 +230,28 @@ describe('extractNetFeatures', () => {
     expect(extractNetFeatures('')).toBeNull();
   });
 
+  // NOTE: Test matrix suggests non-numeric → asn=unknown.
+  // Current implementation returns null (omit header) since a
+  // non-numeric ASN is a malformed input, not a valid category.
   test('non-numeric string → null', () => {
     expect(extractNetFeatures('abc')).toBeNull();
+  });
+
+  test('zero → asn=consumer (not in cloud set)', () => {
+    expect(extractNetFeatures(0)).toBe('asn=consumer');
+  });
+
+  test('negative number → asn=consumer (not in cloud set)', () => {
+    expect(extractNetFeatures(-1)).toBe('asn=consumer');
+  });
+
+  test('very large ASN → asn=consumer', () => {
+    expect(extractNetFeatures(999999)).toBe('asn=consumer');
+  });
+
+  test('output is valid SF-Dictionary', () => {
+    const result = extractNetFeatures('16509');
+    expect(isValidSFDictionary(result)).toBe(true);
   });
 });
 
@@ -210,6 +301,18 @@ describe('extractCHFeatures', () => {
     expect(extractCHFeatures(edgeCH, edgeUA))
       .toBe('present, brands=3, grease, consistent');
   });
+
+  test('single brand (Google Chrome only) → brands=1, consistent', () => {
+    const singleBrand = '"Google Chrome";v="100"';
+    // Google Chrome brand matches CH version extractor, and Chrome/100 in UA matches
+    const ua = 'Mozilla/5.0 Chrome/100.0.0.0 Safari/537.36';
+    expect(extractCHFeatures(singleBrand, ua)).toBe('present, brands=1, consistent');
+  });
+
+  test('output is valid SF-Dictionary', () => {
+    const result = extractCHFeatures(CHROME_134_CH, CHROME_134_UA);
+    expect(isValidSFDictionary(result)).toBe(true);
+  });
 });
 
 // ── §6.3.1  extractUAFeatures ──────────────────────────────────────────────
@@ -223,6 +326,10 @@ describe('extractUAFeatures', () => {
   const HEADLESS_CHROME = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/134.0.0.0 Safari/537.36';
   const PUPPETEER = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/134.0.0.0 Safari/537.36 Puppeteer';
   const GOOGLEBOT = 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)';
+  const IPAD = 'Mozilla/5.0 (iPad; CPU OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1';
+  const ANDROID_TABLET = 'Mozilla/5.0 (Linux; Android 13; SM-X200) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+  const ANDROID_PHONE = 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36';
+  const SAFARI_MAC = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15';
 
   // ── dpf compound token ─────────────────────────────────────────────────
   test('Chrome on Mac → desktop/mac/chrome', () => {
@@ -249,8 +356,24 @@ describe('extractUAFeatures', () => {
     expect(extractUAFeatures(HEADLESS_CHROME)).toMatch(/^dpf=desktop\/linux\/chrome/);
   });
 
-  test('Googlebot → server device, bot family', () => {
+  test('Googlebot → server/other/bot', () => {
     expect(extractUAFeatures(GOOGLEBOT)).toMatch(/dpf=server\/other\/bot/);
+  });
+
+  test('iPad → tablet/ios/safari', () => {
+    expect(extractUAFeatures(IPAD)).toMatch(/^dpf=tablet\/ios\/safari/);
+  });
+
+  test('Android tablet (no "Mobile") → tablet/android/chrome', () => {
+    expect(extractUAFeatures(ANDROID_TABLET)).toMatch(/^dpf=tablet\/android\/chrome/);
+  });
+
+  test('Android phone → mobile/android/chrome', () => {
+    expect(extractUAFeatures(ANDROID_PHONE)).toMatch(/^dpf=mobile\/android\/chrome/);
+  });
+
+  test('Safari on Mac → desktop/mac/safari', () => {
+    expect(extractUAFeatures(SAFARI_MAC)).toMatch(/^dpf=desktop\/mac\/safari/);
   });
 
   // ── version bucketing ──────────────────────────────────────────────────
@@ -260,6 +383,23 @@ describe('extractUAFeatures', () => {
 
   test('curl/7.88.1 → ver=0-79', () => {
     expect(extractUAFeatures(CURL)).toMatch(/ver=0-79/);
+  });
+
+  // Bucket boundary tests: verify version numbers at edges of each range
+  test.each([
+    ['Chrome/79.0.0.0',  '0-79'],
+    ['Chrome/80.0.0.0',  '80-99'],
+    ['Chrome/99.0.0.0',  '80-99'],
+    ['Chrome/100.0.0.0', '100-119'],
+    ['Chrome/119.0.0.0', '100-119'],
+    ['Chrome/120.0.0.0', '120-139'],
+    ['Chrome/139.0.0.0', '120-139'],
+    ['Chrome/140.0.0.0', '140+'],
+    ['Chrome/999.0.0.0', '140+'],
+  ])('version bucket boundary: %s → ver=%s', (chromeToken, expected) => {
+    // Wrap in a minimal browser-like UA so detectDevice/detectPlatform work
+    const ua = `Mozilla/5.0 (X11; Linux x86_64) ${chromeToken} Safari/537.36`;
+    expect(extractUAFeatures(ua)).toMatch(new RegExp(`ver=${expected.replace('+', '\\+')}`));
   });
 
   // ── browser flag ───────────────────────────────────────────────────────
@@ -276,6 +416,10 @@ describe('extractUAFeatures', () => {
     expect(extractUAFeatures(HEADLESS_CHROME)).toMatch(/\bheadless\b/);
   });
 
+  test('HeadlessChrome → no automation flag (headless only)', () => {
+    expect(extractUAFeatures(HEADLESS_CHROME)).not.toMatch(/\bautomation\b/);
+  });
+
   test('Puppeteer → both headless and automation', () => {
     const result = extractUAFeatures(PUPPETEER);
     expect(result).toMatch(/\bheadless\b/);
@@ -288,6 +432,10 @@ describe('extractUAFeatures', () => {
 
   test('Selenium → automation', () => {
     expect(extractUAFeatures('Mozilla/5.0 Selenium/4.0')).toMatch(/\bautomation\b/);
+  });
+
+  test('wget → automation', () => {
+    expect(extractUAFeatures('wget/1.21.4')).toMatch(/\bautomation\b/);
   });
 
   test('normal Chrome → no headless or automation', () => {
@@ -305,6 +453,15 @@ describe('extractUAFeatures', () => {
     expect(extractUAFeatures(CURL)).toMatch(/entropy=low/);
   });
 
+  test('very long UA (>300 chars) → entropy=low', () => {
+    const longUA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) ' + 'A'.repeat(300);
+    expect(extractUAFeatures(longUA)).toMatch(/entropy=low/);
+  });
+
+  test('minimal short string → entropy=low', () => {
+    expect(extractUAFeatures('bot')).toMatch(/entropy=low/);
+  });
+
   // ── null/empty ─────────────────────────────────────────────────────────
   test('null → null', () => {
     expect(extractUAFeatures(null)).toBeNull();
@@ -314,7 +471,11 @@ describe('extractUAFeatures', () => {
     expect(extractUAFeatures('')).toBeNull();
   });
 
-  // ── spec Appendix B examples ───────────────────────────────────────────
+  test('whitespace only → null', () => {
+    expect(extractUAFeatures('   ')).toBeNull();
+  });
+
+  // ── spec Appendix B examples (exact output match) ──────────────────────
   test('spec example: Chrome on Mac', () => {
     expect(extractUAFeatures(CHROME_MAC))
       .toBe('dpf=desktop/mac/chrome, ver=120-139, browser, entropy=medium');
@@ -328,6 +489,21 @@ describe('extractUAFeatures', () => {
   test('spec example: Puppeteer', () => {
     expect(extractUAFeatures(PUPPETEER))
       .toBe('dpf=desktop/linux/chrome, ver=120-139, browser, headless, automation, entropy=medium');
+  });
+
+  test('output is valid SF-Dictionary', () => {
+    const result = extractUAFeatures(CHROME_MAC);
+    expect(isValidSFDictionary(result)).toBe(true);
+  });
+
+  test('all dpf compound values use slash separators (no spaces)', () => {
+    const uas = [CHROME_MAC, FIREFOX_WIN, SAFARI_IOS, EDGE_WIN, CURL, HEADLESS_CHROME, GOOGLEBOT, IPAD, ANDROID_TABLET];
+    for (const ua of uas) {
+      const result = extractUAFeatures(ua);
+      const dpf = result.match(/^dpf=([^,]+)/)[1];
+      const segments = dpf.split('/');
+      expect(segments).toHaveLength(3);
+    }
   });
 });
 
@@ -368,8 +544,28 @@ describe('computeUAHMAC', () => {
     expect(await computeUAHMAC(TEST_UA, null)).toBeNull();
   });
 
+  // NOTE: Test matrix suggests empty UA should still produce HMAC.
+  // Current implementation returns null (empty string is falsy, no
+  // useful signal to HMAC). If spec intent changes, update here.
   test('empty UA → null', async () => {
     expect(await computeUAHMAC('', TEST_KEY)).toBeNull();
+  });
+
+  test('empty key → null', async () => {
+    expect(await computeUAHMAC(TEST_UA, '')).toBeNull();
+  });
+
+  test('very long UA still produces valid HMAC', async () => {
+    const longUA = 'Mozilla/5.0 ' + 'X'.repeat(5000);
+    const result = await computeUAHMAC(longUA, TEST_KEY);
+    expect(result).toMatch(/^:[A-Za-z0-9+/]+=*:$/);
+  });
+
+  test('HMAC length is consistent (44-char base64 = 256-bit digest)', async () => {
+    const result = await computeUAHMAC(TEST_UA, TEST_KEY);
+    // SHA-256 → 32 bytes → 44 base64 chars, wrapped with ':'
+    const inner = result.slice(1, -1); // strip : delimiters
+    expect(inner).toHaveLength(44);
   });
 });
 
@@ -397,6 +593,18 @@ describe('computeCTFingerprint', () => {
     expect(a).not.toBe(b);
   });
 
+  test('different language → different fingerprint', async () => {
+    const a = await computeCTFingerprint(TEST_UA, 'en-US', TEST_CH);
+    const b = await computeCTFingerprint(TEST_UA, 'fr-FR', TEST_CH);
+    expect(a).not.toBe(b);
+  });
+
+  test('different CH → different fingerprint', async () => {
+    const a = await computeCTFingerprint(TEST_UA, TEST_LANG, '"Chrome";v="134"');
+    const b = await computeCTFingerprint(TEST_UA, TEST_LANG, '"Chrome";v="120"');
+    expect(a).not.toBe(b);
+  });
+
   test('null inputs treated as empty strings (still produces fp)', async () => {
     const fp = await computeCTFingerprint(null, null, null);
     expect(fp).toMatch(/^[0-9a-f]{8}$/);
@@ -405,5 +613,12 @@ describe('computeCTFingerprint', () => {
   test('partial inputs work (missing lang/ch)', async () => {
     const fp = await computeCTFingerprint(TEST_UA, null, null);
     expect(fp).toMatch(/^[0-9a-f]{8}$/);
+  });
+
+  test('order of concatenation matters (UA+lang+CH ≠ lang+UA+CH)', async () => {
+    // Swapping inputs should produce different fingerprints
+    const a = await computeCTFingerprint('A', 'B', 'C');
+    const b = await computeCTFingerprint('B', 'A', 'C');
+    expect(a).not.toBe(b);
   });
 });
