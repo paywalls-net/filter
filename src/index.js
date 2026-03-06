@@ -4,6 +4,11 @@
  */
 const sdk_version = "1.2.x";
 import { classifyUserAgent, loadAgentPatterns } from './user-agent-classification.js';
+import {
+    extractAcceptFeatures, extractEncodingFeatures, extractLanguageFeatures,
+    extractNetFeatures, extractCHFeatures, extractUAFeatures,
+    computeUAHMAC, computeConfidenceToken,
+} from './signal-extraction.js';
 
 const PAYWALLS_CLOUD_API_HOST = "https://cloud-api.paywalls.net";
 
@@ -91,27 +96,12 @@ const PROXY_HEADER_MAP = [
 ];
 
 /**
- * Maps browser signal sources → X-PW-* forwarding headers (§5.2).
- * Each entry: { from: 'headers'|'cf', src: string, dest: string }
- *   from:'headers' — read from incoming request headers (lowercase)
- *   from:'cf'      — read from request.cf property
+ * Set a header only if the value is non-null (extractor returns null for
+ * absent inputs → header omitted entirely, not sent as empty string).
  */
-const SIGNAL_HEADER_MAP = [
-    // Bundle A: Sec-Fetch (3 pts)
-    { from: 'headers', src: 'sec-fetch-dest',  dest: 'X-PW-Sec-Fetch-Dest'  },
-    { from: 'headers', src: 'sec-fetch-mode',  dest: 'X-PW-Sec-Fetch-Mode'  },
-    { from: 'headers', src: 'sec-fetch-site',  dest: 'X-PW-Sec-Fetch-Site'  },
-    // Bundle B: Accept (2 pts)
-    { from: 'headers', src: 'accept',          dest: 'X-PW-Accept'          },
-    { from: 'headers', src: 'accept-language', dest: 'X-PW-Accept-Language' },
-    { from: 'headers', src: 'accept-encoding', dest: 'X-PW-Accept-Encoding' },
-    // Bundle C: Client Hints (2 pts)
-    { from: 'headers', src: 'sec-ch-ua',       dest: 'X-PW-Sec-CH-UA'       },
-    // Bundle D: CF infrastructure (1 pt) — only valid at first-hop CF Worker
-    { from: 'cf',      src: 'tlsVersion',      dest: 'X-PW-TLS-Version'     },
-    { from: 'cf',      src: 'httpProtocol',    dest: 'X-PW-HTTP-Protocol'   },
-    { from: 'cf',      src: 'asn',             dest: 'X-PW-ASN'             },
-];
+function setIfPresent(obj, key, value) {
+    if (value != null) obj[key] = value;
+}
 
 /**
  * Proxy VAI requests to the cloud-api service (Spec §7).
@@ -128,10 +118,9 @@ const SIGNAL_HEADER_MAP = [
  *  - User-Agent, X-Forwarded-For: standard proxy headers
  *  - Authorization: publisher API key (§7.4)
  * 
- * Human-confidence signal forwarding (§5.2):
- *  Driven by SIGNAL_HEADER_MAP — each entry specifies a source ('headers' or 'cf')
- *  and property name to read, and the X-PW-* destination header to write.
- *  Simple passthrough: present values forwarded, absent values omitted.
+ * Human-confidence signal forwarding (§7.2):
+ *  Uses signal-extraction module to transform raw browser headers into compact
+ *  RFC 8941 Structured Field Value strings.  Absent inputs → null → header omitted.
  * 
  * Response passthrough (§7.3):
  *  All response headers from cloud-api are returned unchanged — including
@@ -155,7 +144,7 @@ async function proxyVAIRequest(cfg, request) {
         // Build forwarding headers — include everything cloud-api needs
         // for CORS evaluation, domain auth, and request context.
         const forwardHeaders = {
-            'User-Agent': headers['user-agent'] || sdkUserAgent,
+            'User-Agent': sdkUserAgent,
             'Authorization': `Bearer ${cfg.paywallsAPIKey}`
         };
         
@@ -171,16 +160,29 @@ async function proxyVAIRequest(cfg, request) {
             if (headers[src]) forwardHeaders[dest] = headers[src];
         }
 
-        // Forward browser-provenance signals as X-PW-* headers (§5.2).
-        // Simple passthrough: forward whatever is present, no cross-request state.
+        // Signal protocol version (§7.1)
+        forwardHeaders['X-PW-V'] = '2';
+
         const cf = request.cf || {};
-        const sources = { headers, cf };
-        for (const { from, src, dest } of SIGNAL_HEADER_MAP) {
-            const value = sources[from][src];
-            if (value != null && value !== '') {
-                forwardHeaders[dest] = String(value);
-            }
-        }
+
+        // Tier 1: kept raw (§6.1)
+        setIfPresent(forwardHeaders, 'X-PW-Sec-Fetch-Dest', headers['sec-fetch-dest']);
+        setIfPresent(forwardHeaders, 'X-PW-Sec-Fetch-Mode', headers['sec-fetch-mode']);
+        setIfPresent(forwardHeaders, 'X-PW-Sec-Fetch-Site', headers['sec-fetch-site']);
+        setIfPresent(forwardHeaders, 'X-PW-TLS-Version',    cf.tlsVersion != null ? String(cf.tlsVersion) : null);
+        setIfPresent(forwardHeaders, 'X-PW-HTTP-Protocol',  cf.httpProtocol != null ? String(cf.httpProtocol) : null);
+
+        // Tier 2: extract features (§6.2)
+        setIfPresent(forwardHeaders, 'X-PW-Accept', extractAcceptFeatures(headers['accept']));
+        setIfPresent(forwardHeaders, 'X-PW-Enc',    extractEncodingFeatures(headers['accept-encoding']));
+        setIfPresent(forwardHeaders, 'X-PW-Lang',   extractLanguageFeatures(headers['accept-language']));
+        setIfPresent(forwardHeaders, 'X-PW-Net',    extractNetFeatures(cf.asn));
+        setIfPresent(forwardHeaders, 'X-PW-CH',     extractCHFeatures(headers['sec-ch-ua'], headers['user-agent']));
+
+        // Tier 3: UA features + HMAC (§6.3)
+        setIfPresent(forwardHeaders, 'X-PW-UA', extractUAFeatures(headers['user-agent']));
+        setIfPresent(forwardHeaders, 'X-PW-UA-HMAC', await computeUAHMAC(headers['user-agent'], cfg.vaiUAHmacKey));
+        setIfPresent(forwardHeaders, 'X-PW-CT-FP',   await computeConfidenceToken(headers['user-agent'], headers['accept-language'], headers['sec-ch-ua']));
 
         // Forward request to cloud-api
         const response = await fetch(`${cfg.paywallsAPIHost}${cloudApiPath}`, {
@@ -417,7 +419,8 @@ async function cloudflare(config = null) {
             paywallsAPIHost: env.PAYWALLS_CLOUD_API_HOST || PAYWALLS_CLOUD_API_HOST,
             paywallsAPIKey: env.PAYWALLS_CLOUD_API_KEY,
             paywallsPublisherId: env.PAYWALLS_PUBLISHER_ID,
-            vaiPath: env.PAYWALLS_VAI_PATH || '/pw'
+            vaiPath: env.PAYWALLS_VAI_PATH || '/pw',
+            vaiUAHmacKey: env.VAI_UA_HMAC_KEY || null,
         };
         
         // Check if this is a VAI endpoint request and proxy it
@@ -449,7 +452,8 @@ async function fastly() {
             paywallsAPIHost: config.get('PAYWALLS_CLOUD_API_HOST') || PAYWALLS_CLOUD_API_HOST,
             paywallsAPIKey: config.get('PAYWALLS_API_KEY'),
             paywallsPublisherId: config.get('PAYWALLS_PUBLISHER_ID'),
-            vaiPath: config.get('PAYWALLS_VAI_PATH') || '/pw'
+            vaiPath: config.get('PAYWALLS_VAI_PATH') || '/pw',
+            vaiUAHmacKey: config.get('VAI_UA_HMAC_KEY') || null,
         };
         
         // Check if this is a VAI endpoint request and proxy it
@@ -531,7 +535,8 @@ async function cloudfront(config) {
         paywallsAPIHost: config.PAYWALLS_CLOUD_API_HOST || PAYWALLS_CLOUD_API_HOST,
         paywallsAPIKey: config.PAYWALLS_API_KEY,
         paywallsPublisherId: config.PAYWALLS_PUBLISHER_ID,
-        vaiPath: config.PAYWALLS_VAI_PATH || '/pw'
+        vaiPath: config.PAYWALLS_VAI_PATH || '/pw',
+        vaiUAHmacKey: config.VAI_UA_HMAC_KEY || null,
     };
     await loadAgentPatterns(paywallsConfig);
 
