@@ -274,4 +274,106 @@ describe('proxyVAIRequest — signal extraction pipeline', () => {
     const args2 = await proxyVAI('https://pub.example.com/pw/vai.json', CHROME_MAC_HEADERS, CF_PROPS);
     expect(args1.headers['X-PW-CT-FP']).toBe(args2.headers['X-PW-CT-FP']);
   });
+
+  // ── All 14 signal headers present (Chrome full) ──────────────────────────
+
+  test('Chrome full request — all 14 X-PW signal headers emitted', async () => {
+    const args = await proxyVAI('https://pub.example.com/pw/vai.json', CHROME_MAC_HEADERS, CF_PROPS);
+    const xpwHeaders = Object.keys(args.headers).filter(k => k.startsWith('X-PW-'));
+    expect(xpwHeaders).toHaveLength(14);
+    expect(xpwHeaders).toEqual(expect.arrayContaining([
+      'X-PW-V',
+      'X-PW-Sec-Fetch-Dest', 'X-PW-Sec-Fetch-Mode', 'X-PW-Sec-Fetch-Site',
+      'X-PW-TLS-Version', 'X-PW-HTTP-Protocol',
+      'X-PW-Accept', 'X-PW-Enc', 'X-PW-Lang', 'X-PW-Net', 'X-PW-CH',
+      'X-PW-UA', 'X-PW-UA-HMAC', 'X-PW-CT-FP',
+    ]));
+  });
+});
+
+// ── logAccess — non-VAI path raw header forwarding ───────────────────────────
+//
+// Verifies that logAccess() does NOT transform headers like proxyVAIRequest().
+// The access-log body must contain the raw browser User-Agent (not the SDK
+// sentinel) and must NOT contain any X-PW-* signal headers.
+
+describe('logAccess — non-VAI path forwards raw user-agent in body', () => {
+  let handler;
+  let fetchCalls;
+
+  beforeAll(async () => {
+    handler = await init('cloudflare');
+  });
+
+  beforeEach(() => {
+    fetchCalls = [];
+    globalThis.fetch = async (url, opts) => {
+      const call = { url, ...opts };
+      fetchCalls.push(call);
+      if (String(url).includes('/agents/metadata')) {
+        // loadAgentPatterns — return empty pattern list
+        return {
+          ok: true,
+          json: async () => ({ version: 2, patterns: [] }),
+        };
+      }
+      if (String(url).includes('/agents/auth')) {
+        // checkAgentStatus — allow the bot through so logAccess is called
+        return {
+          ok: true,
+          json: async () => ({ access: 'allow', reason: 'known_bot', response: { code: 200, headers: {} } }),
+        };
+      }
+      // logAccess POST /access/logs
+      return { ok: true, status: 200, statusText: 'OK' };
+    };
+  });
+
+  afterAll(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  test('logAccess body contains raw user-agent, not SDK identifier', async () => {
+    const browserUA = CHROME_MAC_HEADERS['user-agent'];
+    // ?user-agent=testbot triggers isTestBot() → bot path → checkAgentStatus + logAccess
+    const request = makeRequest(
+      'https://pub.example.com/article/1?user-agent=testbot',
+      CHROME_MAC_HEADERS,
+      CF_PROPS,
+    );
+    let logPromise;
+    const ctx = { waitUntil: (p) => { logPromise = p; } };
+
+    await handler(request, ENV, ctx);
+    if (logPromise) await logPromise;
+
+    const logCall = fetchCalls.find(c => String(c.url).includes('/access/logs'));
+    expect(logCall).toBeDefined();
+    const body = JSON.parse(logCall.body);
+
+    expect(body.user_agent).toBe(browserUA);
+    expect(body.user_agent).not.toMatch(/^pw-filter-sdk\//);
+  });
+
+  test('logAccess body headers contain no X-PW-* signal headers', async () => {
+    const request = makeRequest(
+      'https://pub.example.com/article/2?user-agent=testbot',
+      CHROME_MAC_HEADERS,
+      CF_PROPS,
+    );
+    let logPromise;
+    const ctx = { waitUntil: (p) => { logPromise = p; } };
+
+    await handler(request, ENV, ctx);
+    if (logPromise) await logPromise;
+
+    const logCall = fetchCalls.find(c => String(c.url).includes('/access/logs'));
+    expect(logCall).toBeDefined();
+    const body = JSON.parse(logCall.body);
+
+    const xpwKeysInLog = Object.keys(body.headers || {}).filter(
+      k => k.toLowerCase().startsWith('x-pw-'),
+    );
+    expect(xpwKeysInLog).toHaveLength(0);
+  });
 });
