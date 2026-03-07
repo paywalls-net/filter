@@ -8,6 +8,7 @@ import {
     extractAcceptFeatures, extractEncodingFeatures, extractLanguageFeatures,
     extractNetFeatures, extractCHFeatures, extractUAFeatures,
     computeUAHMAC, computeConfidenceToken,
+    loadVAIMetadata,
 } from './signal-extraction.js';
 
 const PAYWALLS_CLOUD_API_HOST = "https://cloud-api.paywalls.net";
@@ -428,7 +429,11 @@ async function cloudflare(config = null) {
             return await proxyVAIRequest(paywallsConfig, request);
         }
         
-        await loadAgentPatterns(paywallsConfig);
+        // Load agent patterns + VAI metadata in parallel (both self-cache for 1 hour)
+        await Promise.all([
+            loadAgentPatterns(paywallsConfig),
+            loadVAIMetadata(paywallsConfig),
+        ]);
 
         if (await isRecognizedBot(paywallsConfig, request)) {
             const authz = await checkAgentStatus(paywallsConfig, request);
@@ -461,7 +466,11 @@ async function fastly() {
             return await proxyVAIRequest(paywallsConfig, request);
         }
 
-        await loadAgentPatterns(paywallsConfig);
+        // Load agent patterns + VAI metadata in parallel (both self-cache for 1 hour)
+        await Promise.all([
+            loadAgentPatterns(paywallsConfig),
+            loadVAIMetadata(paywallsConfig),
+        ]);
 
         if (await isRecognizedBot(paywallsConfig, request)) {
             const authz = await checkAgentStatus(paywallsConfig, request);
@@ -538,7 +547,11 @@ async function cloudfront(config) {
         vaiPath: config.PAYWALLS_VAI_PATH || '/pw',
         vaiUAHmacKey: config.VAI_UA_HMAC_KEY || null,
     };
-    await loadAgentPatterns(paywallsConfig);
+    // Load agent patterns + VAI metadata in parallel (both self-cache for 1 hour)
+    await Promise.all([
+        loadAgentPatterns(paywallsConfig),
+        loadVAIMetadata(paywallsConfig),
+    ]);
 
     return async function handle(event, ctx) {
         let request = event.Records[0].cf.request;

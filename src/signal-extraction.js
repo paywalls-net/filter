@@ -11,11 +11,17 @@
  * omit the header entirely (not send an empty value).
  */
 
-// ── §6.2.4 / Appendix A: Data-center ASN set ──────────────────────────────
-// Comprehensive cloud/hosting provider ASNs for DC classification.
-// Kept in sync with cloud-api DC_ASN_LIST (cloudflare/vai.js).
-// Source: public ASN registries (PeeringDB, RIPE, ARIN).
-const DC_ASN_SET = new Set([
+// ── VAI Metadata: dynamic loading with hardcoded fallbacks ──────────────────
+// (paywalls-site-fc4)
+//
+// These module-level vars are initialized from hardcoded defaults below.
+// When loadVAIMetadata() is called, they are updated from the cloud-api
+// /pw/vai/metadata endpoint.  If the fetch fails, the hardcoded defaults
+// remain in effect — no data loss, no crash.
+
+// ── Hardcoded defaults (bootstrap / fallback) ──────────────────────────────
+
+const DEFAULT_DC_ASNS = [
   // ── Major IaaS ───────────────────────────────────────────────────────────
   16509, 14618,          // Amazon AWS (primary + secondary)
   396982, 36492, 15169,  // Google Cloud + Google infra
@@ -34,7 +40,126 @@ const DC_ASN_SET = new Set([
   12876,                 // Scaleway
   51167,                 // Contabo
   60781, 28753,          // Leaseweb (NL + global)
-]);
+];
+
+const DEFAULT_AUTOMATION_PATTERNS = [
+  'Puppeteer', 'Playwright', 'Selenium', 'WebDriver',
+  'PhantomJS', 'CasperJS',
+  'python-requests', 'python-urllib', 'Go-http-client',
+  'okhttp', 'Apache-HttpClient', 'libcurl',
+  '\\bcurl\\/', '\\bwget\\/', 'HTTPie',
+  'node-fetch', 'undici', 'axios\\/', '\\bgot\\/', 'superagent',
+  'Cypress', 'TestCafe', 'Nightwatch', 'WebdriverIO',
+  'Scrapy', 'Java\\/|Java HttpURLConnection', 'PostmanRuntime\\/',
+  '\\bDeno\\/', '\\bhttpx\\b|python-httpx',
+];
+
+const DEFAULT_HEADLESS_PATTERNS = [
+  'HeadlessChrome', '\\bHeadless\\b',
+];
+
+const DEFAULT_BOT_PATTERNS = [
+  'Googlebot', 'bingbot', 'Baiduspider', 'YandexBot', 'DuckDuckBot',
+  'Slurp', 'ia_archiver', 'GPTBot', 'ClaudeBot', 'CCBot', 'Bytespider',
+  'Applebot', 'PetalBot', 'SemrushBot', 'AhrefsBot', 'DotBot',
+];
+
+// ── Mutable state: updated by loadVAIMetadata() ────────────────────────────
+
+/** @type {Set<number>} */
+let DC_ASN_SET = new Set(DEFAULT_DC_ASNS);
+
+/** @type {RegExp[]} */
+let AUTOMATION_MARKERS = DEFAULT_AUTOMATION_PATTERNS.map(p => new RegExp(p, 'i'));
+
+/** @type {RegExp[]} */
+let HEADLESS_MARKERS = DEFAULT_HEADLESS_PATTERNS.map(p => new RegExp(p, 'i'));
+
+/** @type {RegExp} — single combined regex for bot family detection */
+let BOT_FAMILY_RE = new RegExp('\\b(' + DEFAULT_BOT_PATTERNS.join('|') + ')\\b', 'i');
+
+// ── Metadata cache ─────────────────────────────────────────────────────────
+
+let _vaiMetadataCache = null;     // { data, ts }
+const VAI_METADATA_TTL = 60 * 60 * 1000; // 1 hour
+
+/**
+ * Compile pattern strings (from metadata JSON) into RegExp objects.
+ * Each string is treated as a regex source with case-insensitive flag.
+ * @param {string[]} patterns
+ * @returns {RegExp[]}
+ */
+function compilePatterns(patterns) {
+  return patterns.map(p => new RegExp(p, 'i'));
+}
+
+/**
+ * Fetch VAI metadata from cloud-api and update mutable module state.
+ * Caches for 1 hour.  Falls back to hardcoded defaults on failure.
+ *
+ * Pattern: matches loadAgentPatterns() in user-agent-classification.js.
+ *
+ * @param {Object} cfg  Config with paywallsAPIHost (cloud-api base URL)
+ * @returns {Promise<void>}
+ */
+export async function loadVAIMetadata(cfg) {
+  const now = Date.now();
+
+  // Return early if cache is still valid
+  if (_vaiMetadataCache && (now - _vaiMetadataCache.ts) < VAI_METADATA_TTL) {
+    return;
+  }
+
+  try {
+    const response = await fetch(`${cfg.paywallsAPIHost}/pw/vai/metadata`, {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' },
+    });
+
+    if (!response.ok) {
+      throw new Error(`VAI metadata fetch failed: ${response.status} ${response.statusText}`);
+    }
+
+    const data = await response.json();
+
+    // Validate minimal schema
+    if (!data || typeof data.version !== 'number') {
+      throw new Error('VAI metadata: invalid schema (missing version)');
+    }
+
+    // Update mutable state from fetched data
+    if (Array.isArray(data.dc_asns) && data.dc_asns.length > 0) {
+      DC_ASN_SET = new Set(data.dc_asns);
+    }
+    if (Array.isArray(data.automation_patterns) && data.automation_patterns.length > 0) {
+      AUTOMATION_MARKERS = compilePatterns(data.automation_patterns);
+    }
+    if (Array.isArray(data.headless_patterns) && data.headless_patterns.length > 0) {
+      HEADLESS_MARKERS = compilePatterns(data.headless_patterns);
+    }
+    if (Array.isArray(data.bot_patterns) && data.bot_patterns.length > 0) {
+      BOT_FAMILY_RE = new RegExp('\\b(' + data.bot_patterns.join('|') + ')\\b', 'i');
+    }
+
+    _vaiMetadataCache = { data, ts: now };
+  } catch (error) {
+    console.error('loadVAIMetadata: fetch failed, using hardcoded defaults.', error.message || error);
+    // Mark cache so we don't retry immediately (back off for 5 minutes)
+    _vaiMetadataCache = { data: null, ts: now - VAI_METADATA_TTL + (5 * 60 * 1000) };
+  }
+}
+
+/**
+ * Reset metadata state to hardcoded defaults and clear cache.
+ * Exposed for testing only.
+ */
+export function _resetVAIMetadata() {
+  DC_ASN_SET = new Set(DEFAULT_DC_ASNS);
+  AUTOMATION_MARKERS = DEFAULT_AUTOMATION_PATTERNS.map(p => new RegExp(p, 'i'));
+  HEADLESS_MARKERS = DEFAULT_HEADLESS_PATTERNS.map(p => new RegExp(p, 'i'));
+  BOT_FAMILY_RE = new RegExp('\\b(' + DEFAULT_BOT_PATTERNS.join('|') + ')\\b', 'i');
+  _vaiMetadataCache = null;
+}
 
 // ── §6.2.1  Accept → X-PW-Accept ──────────────────────────────────────────
 /**
@@ -191,19 +316,9 @@ export function extractCHFeatures(secChUA, userAgent) {
 // ── §6.3.3  Automation marker detection ────────────────────────────────────
 // HeadlessChrome triggers 'headless' only (via HEADLESS_MARKERS).
 // Explicit automation tools (Puppeteer, Selenium, etc.) trigger 'automation'.
-const AUTOMATION_MARKERS = [
-  /Puppeteer/i, /Playwright/i, /Selenium/i, /WebDriver/i,
-  /PhantomJS/i, /CasperJS/i,
-  /python-requests/i, /python-urllib/i, /Go-http-client/i,
-  /okhttp/i, /Apache-HttpClient/i, /libcurl/i,
-  /\bcurl\//i, /\bwget\//i, /HTTPie/i,
-  /node-fetch/i, /undici/i, /axios\//i, /\bgot\//i, /superagent/i,
-  /Cypress/i, /TestCafe/i, /Nightwatch/i, /WebdriverIO/i,
-  /Scrapy/i, /Java\/|Java HttpURLConnection/i, /PostmanRuntime\//i,
-  /\bDeno\//i, /\bhttpx\b|python-httpx/i,
-];
-
-const HEADLESS_MARKERS = [/HeadlessChrome/i, /\bHeadless\b/i];
+// AUTOMATION_MARKERS and HEADLESS_MARKERS are now module-level mutable vars
+// initialized from hardcoded defaults (top of file) and updated dynamically
+// by loadVAIMetadata().  See paywalls-site-fc4.
 
 // ── §6.3.4  Entropy bucketing ──────────────────────────────────────────────
 /**
@@ -273,8 +388,8 @@ function detectPlatform(ua) {
 
 /** @returns {'chrome'|'safari'|'firefox'|'edge'|'ucbrowser'|'other'|'bot'} */
 function detectFamily(ua) {
-  // Bots: search engine crawlers + AI/SEO crawlers
-  if (/\b(Googlebot|bingbot|Baiduspider|YandexBot|DuckDuckBot|Slurp|ia_archiver|GPTBot|ClaudeBot|CCBot|Bytespider|Applebot|PetalBot|SemrushBot|AhrefsBot|DotBot)\b/i.test(ua)) return 'bot';
+  // Bots: search engine crawlers + AI/SEO crawlers (dynamic via loadVAIMetadata)
+  if (BOT_FAMILY_RE.test(ua)) return 'bot';
   // UC Browser: mobile-heavy, no Client Hints — check before Chrome
   if (/UCBrowser|UCWEB/i.test(ua)) return 'ucbrowser';
   // Order matters: Edge before Chrome (Edge UA contains "Chrome")

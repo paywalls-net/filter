@@ -2,7 +2,7 @@
  * Unit tests for signal extraction functions (Tier 2 + Tier 3)
  *
  * Spec: specs/vai-privacy-v2.spec.md §6.2–§6.4
- * Issue: paywalls-site-drk
+ * Issue: paywalls-site-drk, paywalls-site-fc4
  */
 import {
   extractAcceptFeatures,
@@ -13,6 +13,8 @@ import {
   extractUAFeatures,
   computeUAHMAC,
   computeConfidenceToken,
+  loadVAIMetadata,
+  _resetVAIMetadata,
 } from '../src/signal-extraction.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -771,5 +773,230 @@ describe('computeConfidenceToken', () => {
     const a = await computeConfidenceToken('A', 'B', 'C');
     const b = await computeConfidenceToken('B', 'A', 'C');
     expect(a).not.toBe(b);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  loadVAIMetadata — Dynamic metadata loading (paywalls-site-fc4)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Simple tracking mock for fetch — records call count and args */
+function mockFetchWith(response) {
+  let calls = 0;
+  const fn = async (url, opts) => {
+    calls++;
+    fn._lastUrl = url;
+    fn._lastOpts = opts;
+    return response;
+  };
+  fn.callCount = () => calls;
+  fn._lastUrl = null;
+  fn._lastOpts = null;
+  return fn;
+}
+
+function mockFetchReject(error) {
+  return async () => { throw error; };
+}
+
+describe('loadVAIMetadata', () => {
+  const originalFetch = globalThis.fetch;
+  const originalConsoleError = console.error;
+  const cfg = { paywallsAPIHost: 'https://cloud-api.example.com' };
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    console.error = originalConsoleError;
+    _resetVAIMetadata();
+  });
+
+  test('updates DC_ASN_SET from fetched metadata', async () => {
+    // Before: hardcoded defaults include 16509 (AWS)
+    expect(extractNetFeatures(16509)).toBe('asn=cloud');
+    expect(extractNetFeatures(99999)).toBe('asn=consumer');
+
+    // Mock metadata with a custom ASN set
+    const mock = mockFetchWith({
+      ok: true,
+      json: async () => ({
+        version: 1,
+        dc_asns: [99999],  // Custom: only 99999 is cloud
+        automation_patterns: ['Puppeteer'],
+        headless_patterns: ['HeadlessChrome'],
+        bot_patterns: ['Googlebot'],
+      }),
+    });
+    globalThis.fetch = mock;
+
+    await loadVAIMetadata(cfg);
+
+    // After: 99999 is now cloud, 16509 is not
+    expect(extractNetFeatures(99999)).toBe('asn=cloud');
+    expect(extractNetFeatures(16509)).toBe('asn=consumer');
+    expect(mock.callCount()).toBe(1);
+    expect(mock._lastUrl).toBe('https://cloud-api.example.com/pw/vai/metadata');
+    expect(mock._lastOpts.method).toBe('GET');
+  });
+
+  test('updates automation markers from fetched metadata', async () => {
+    // Before: hardcoded includes Puppeteer
+    const before = extractUAFeatures('Mozilla/5.0 Puppeteer/1.0');
+    expect(before).toContain('automation');
+
+    // Mock with a custom automation list that doesn't include Puppeteer
+    globalThis.fetch = mockFetchWith({
+      ok: true,
+      json: async () => ({
+        version: 1,
+        dc_asns: [16509],
+        automation_patterns: ['CustomBot'],
+        headless_patterns: ['HeadlessChrome'],
+        bot_patterns: ['Googlebot'],
+      }),
+    });
+
+    await loadVAIMetadata(cfg);
+
+    // Puppeteer no longer matches automation
+    const after = extractUAFeatures('Mozilla/5.0 Puppeteer/1.0');
+    expect(after).not.toContain('automation');
+
+    // CustomBot does
+    const custom = extractUAFeatures('Mozilla/5.0 CustomBot/2.0');
+    expect(custom).toContain('automation');
+  });
+
+  test('updates bot patterns from fetched metadata', async () => {
+    // Before: hardcoded includes Googlebot → family=bot
+    const before = extractUAFeatures('Googlebot/2.1');
+    expect(before).toContain('bot');
+
+    // Mock with a different bot list
+    globalThis.fetch = mockFetchWith({
+      ok: true,
+      json: async () => ({
+        version: 1,
+        dc_asns: [16509],
+        automation_patterns: ['Puppeteer'],
+        headless_patterns: ['HeadlessChrome'],
+        bot_patterns: ['NewAIBot'],
+      }),
+    });
+
+    await loadVAIMetadata(cfg);
+
+    // Googlebot no longer detected as bot family
+    const afterGoogle = extractUAFeatures('Googlebot/2.1');
+    expect(afterGoogle).not.toContain('dpf=server/other/bot');
+
+    // NewAIBot is now detected
+    const afterNew = extractUAFeatures('NewAIBot/1.0');
+    expect(afterNew).toContain('bot');
+  });
+
+  test('falls back to defaults when fetch fails (network error)', async () => {
+    globalThis.fetch = mockFetchReject(new Error('Network error'));
+    console.error = () => {};  // suppress expected error
+
+    await loadVAIMetadata(cfg);
+
+    // Defaults still active: 16509 is cloud
+    expect(extractNetFeatures(16509)).toBe('asn=cloud');
+    // Automation still works
+    const ua = extractUAFeatures('Mozilla/5.0 Puppeteer/1.0');
+    expect(ua).toContain('automation');
+  });
+
+  test('falls back to defaults when fetch returns non-OK', async () => {
+    globalThis.fetch = mockFetchWith({
+      ok: false,
+      status: 500,
+      statusText: 'Internal Server Error',
+    });
+    console.error = () => {};  // suppress expected error
+
+    await loadVAIMetadata(cfg);
+
+    // Defaults still active
+    expect(extractNetFeatures(16509)).toBe('asn=cloud');
+  });
+
+  test('falls back to defaults when response has invalid schema', async () => {
+    globalThis.fetch = mockFetchWith({
+      ok: true,
+      json: async () => ({ invalid: true }),  // missing version
+    });
+    console.error = () => {};  // suppress expected error
+
+    await loadVAIMetadata(cfg);
+
+    // Defaults still active
+    expect(extractNetFeatures(16509)).toBe('asn=cloud');
+  });
+
+  test('caches metadata and does not re-fetch within TTL', async () => {
+    const mock = mockFetchWith({
+      ok: true,
+      json: async () => ({
+        version: 1,
+        dc_asns: [16509],
+        automation_patterns: ['Puppeteer'],
+        headless_patterns: ['HeadlessChrome'],
+        bot_patterns: ['Googlebot'],
+      }),
+    });
+    globalThis.fetch = mock;
+
+    await loadVAIMetadata(cfg);
+    expect(mock.callCount()).toBe(1);
+
+    // Second call within 1 hour — should not fetch again
+    await loadVAIMetadata(cfg);
+    expect(mock.callCount()).toBe(1);
+  });
+
+  test('_resetVAIMetadata restores hardcoded defaults', async () => {
+    // Load custom metadata
+    globalThis.fetch = mockFetchWith({
+      ok: true,
+      json: async () => ({
+        version: 1,
+        dc_asns: [99999],
+        automation_patterns: ['OnlyThisOne'],
+        headless_patterns: ['OnlyHeadless'],
+        bot_patterns: ['OnlyBot'],
+      }),
+    });
+
+    await loadVAIMetadata(cfg);
+    expect(extractNetFeatures(99999)).toBe('asn=cloud');
+    expect(extractNetFeatures(16509)).toBe('asn=consumer');
+
+    // Reset
+    _resetVAIMetadata();
+
+    // Back to defaults
+    expect(extractNetFeatures(16509)).toBe('asn=cloud');
+    expect(extractNetFeatures(99999)).toBe('asn=consumer');
+  });
+
+  test('ignores empty arrays in metadata (keeps defaults)', async () => {
+    globalThis.fetch = mockFetchWith({
+      ok: true,
+      json: async () => ({
+        version: 1,
+        dc_asns: [],
+        automation_patterns: [],
+        headless_patterns: [],
+        bot_patterns: [],
+      }),
+    });
+
+    await loadVAIMetadata(cfg);
+
+    // Defaults still active (empty arrays are ignored)
+    expect(extractNetFeatures(16509)).toBe('asn=cloud');
+    const ua = extractUAFeatures('Mozilla/5.0 Puppeteer/1.0');
+    expect(ua).toContain('automation');
   });
 });
