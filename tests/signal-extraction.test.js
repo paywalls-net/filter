@@ -209,6 +209,21 @@ describe('extractNetFeatures', () => {
     expect(extractNetFeatures('7922')).toBe('asn=consumer');
   });
 
+  // ── Full DC_ASN_SET coverage ───────────────────────────────────────────
+  test.each([
+    [16509, 'AWS primary'], [14618, 'AWS secondary'],
+    [396982, 'GCP'], [36492, 'GCP secondary'], [15169, 'Google infra'],
+    [8075, 'Azure'], [8069, 'Azure secondary'], [8068, 'Azure tertiary'],
+    [31898, 'Oracle Cloud'], [36351, 'IBM/SoftLayer'],
+    [45102, 'Alibaba Cloud'], [132203, 'Tencent Cloud'],
+    [14061, 'DigitalOcean'], [24940, 'Hetzner'], [213230, 'Hetzner Cloud'],
+    [16276, 'OVH'], [63949, 'Linode/Akamai'], [20473, 'Vultr'],
+    [12876, 'Scaleway'], [51167, 'Contabo'],
+    [60781, 'Leaseweb NL'], [28753, 'Leaseweb global'],
+  ])('DC ASN %i (%s) → asn=cloud', (asn) => {
+    expect(extractNetFeatures(asn)).toBe('asn=cloud');
+  });
+
   // ── Input type handling ────────────────────────────────────────────────
   test('numeric input (number, not string) → works', () => {
     expect(extractNetFeatures(16509)).toBe('asn=cloud');
@@ -360,6 +375,135 @@ describe('extractUAFeatures', () => {
     expect(extractUAFeatures(GOOGLEBOT)).toMatch(/dpf=server\/other\/bot/);
   });
 
+  // ── new device types ───────────────────────────────────────────────────
+  test('Smart TV (Tizen) → smarttv device', () => {
+    const ua = 'Mozilla/5.0 (SMART-TV; Linux; Tizen 5.0) AppleWebKit/537.36 Chrome/69.0.3497.106 TV Safari/537.36';
+    expect(extractUAFeatures(ua)).toMatch(/^dpf=smarttv\//);
+  });
+
+  test('Smart TV (WebOS) → smarttv device', () => {
+    const ua = 'Mozilla/5.0 (Web0S; Linux/SmartTV) AppleWebKit/537.36 WebOS TV/5.0';
+    expect(extractUAFeatures(ua)).toMatch(/^dpf=smarttv\//);
+  });
+
+  test('Smart TV (Fire TV) → smarttv device', () => {
+    const ua = 'Mozilla/5.0 (Linux; Android 9; AFTS Build/PS7233) AppleWebKit/537.36 (KHTML, like Gecko) Silk/120.4.1 like Chrome/120.0.0.0 Mobile Safari/537.36 Fire TV';
+    expect(extractUAFeatures(ua)).toMatch(/^dpf=smarttv\//);
+  });
+
+  test('PlayStation → console device', () => {
+    const ua = 'Mozilla/5.0 (PlayStation 5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0 Safari/605.1.15';
+    expect(extractUAFeatures(ua)).toMatch(/^dpf=console\//);
+  });
+
+  test('Xbox → console device', () => {
+    const ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; Xbox; Xbox One) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edge/44.18363.8131';
+    expect(extractUAFeatures(ua)).toMatch(/^dpf=console\//);
+  });
+
+  test('Nintendo → console device', () => {
+    const ua = 'Mozilla/5.0 (Nintendo Switch; WifiWebAuthApplet) AppleWebKit/606.4 (KHTML, like Gecko) NF/6.0.1.16.10 NintendoBrowser/5.1.0.22474';
+    expect(extractUAFeatures(ua)).toMatch(/^dpf=console\//);
+  });
+
+  test('Meta Quest (Oculus) → vr device', () => {
+    const ua = 'Mozilla/5.0 (Linux; Android 12; Quest 3) AppleWebKit/537.36 (KHTML, like Gecko) OculusBrowser/33.0 Chrome/126.0.6478.122 Mobile VR Safari/537.36';
+    expect(extractUAFeatures(ua)).toMatch(/^dpf=vr\//);
+  });
+
+  test('Apple Watch → wearable device', () => {
+    const ua = 'Mozilla/5.0 (Watch; CPU Watch OS 10_0 like Mac OS X) AppleWebKit/605.1.15';
+    expect(extractUAFeatures(ua)).toMatch(/^dpf=wearable\//);
+  });
+
+  test('Tesla → car device', () => {
+    const ua = 'Mozilla/5.0 (X11; GNU/Linux; Tesla) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+    expect(extractUAFeatures(ua)).toMatch(/^dpf=car\//);
+  });
+
+  // ── new platforms ──────────────────────────────────────────────────────
+  test('ChromeOS → chromeos platform', () => {
+    const ua = 'Mozilla/5.0 (X11; CrOS x86_64 14541.0.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36';
+    expect(extractUAFeatures(ua)).toMatch(/dpf=desktop\/chromeos\/chrome/);
+  });
+
+  test('FreeBSD → freebsd platform', () => {
+    const ua = 'Mozilla/5.0 (X11; FreeBSD amd64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+    expect(extractUAFeatures(ua)).toMatch(/dpf=desktop\/freebsd\/chrome/);
+  });
+
+  // ── new browser families ───────────────────────────────────────────────
+  test('UC Browser → ucbrowser family', () => {
+    const ua = 'Mozilla/5.0 (Linux; Android 10; SM-A505F) AppleWebKit/537.36 (KHTML, like Gecko) UCBrowser/16.0.1.3715 Mobile Safari/537.36';
+    expect(extractUAFeatures(ua)).toMatch(/dpf=mobile\/android\/ucbrowser/);
+  });
+
+  test('UCWEB variant → ucbrowser family', () => {
+    const ua = 'UCWEB/2.0 (Java; U; MIDP-2.0)';
+    expect(extractUAFeatures(ua)).toMatch(/\/ucbrowser/);
+  });
+
+  test('Opera (OPR/) → chrome family (Chromium-based)', () => {
+    const ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36 OPR/120.0.0.0';
+    expect(extractUAFeatures(ua)).toMatch(/\/chrome/);
+  });
+
+  test('Brave → chrome family (indistinguishable UA)', () => {
+    // Brave UA is intentionally identical to Chrome
+    const ua = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36';
+    expect(extractUAFeatures(ua)).toMatch(/\/chrome/);
+  });
+
+  // ── AI/SEO bot detection ───────────────────────────────────────────────
+  test('GPTBot → bot family', () => {
+    expect(extractUAFeatures('Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; GPTBot/1.0; +https://openai.com/gptbot)')).toMatch(/\/bot/);
+  });
+
+  test('ClaudeBot → bot family', () => {
+    expect(extractUAFeatures('Mozilla/5.0 (compatible; ClaudeBot/1.0; +https://anthropic.com)')).toMatch(/\/bot/);
+  });
+
+  test('CCBot → bot family', () => {
+    expect(extractUAFeatures('CCBot/2.0 (https://commoncrawl.org/faq/)')).toMatch(/\/bot/);
+  });
+
+  test('Bytespider → bot family', () => {
+    expect(extractUAFeatures('Mozilla/5.0 (Linux; Android 5.0) AppleWebKit/537.36 (compatible; Bytespider; spider-feedback@bytedance.com)')).toMatch(/\/bot/);
+  });
+
+  test('Applebot → bot family', () => {
+    expect(extractUAFeatures('Mozilla/5.0 (compatible; Applebot/0.1; +http://www.apple.com/go/applebot)')).toMatch(/\/bot/);
+  });
+
+  test('SemrushBot → bot family', () => {
+    expect(extractUAFeatures('Mozilla/5.0 (compatible; SemrushBot/7~bl; +http://www.semrush.com/bot.html)')).toMatch(/\/bot/);
+  });
+
+  test('AhrefsBot → bot family', () => {
+    expect(extractUAFeatures('Mozilla/5.0 (compatible; AhrefsBot/7.0; +http://ahrefs.com/robot/)')).toMatch(/\/bot/);
+  });
+
+  // ── new automation markers ─────────────────────────────────────────────
+  test('Scrapy → automation', () => {
+    expect(extractUAFeatures('Scrapy/2.11.0 (+https://scrapy.org)')).toMatch(/\bautomation\b/);
+  });
+
+  test('Java HttpURLConnection → automation', () => {
+    expect(extractUAFeatures('Java/17.0.2')).toMatch(/\bautomation\b/);
+  });
+
+  test('PostmanRuntime → automation', () => {
+    expect(extractUAFeatures('PostmanRuntime/7.36.1')).toMatch(/\bautomation\b/);
+  });
+
+  test('Deno → automation', () => {
+    expect(extractUAFeatures('Deno/1.40.0')).toMatch(/\bautomation\b/);
+  });
+
+  test('httpx → automation', () => {
+    expect(extractUAFeatures('python-httpx/0.27.0')).toMatch(/\bautomation\b/);
+  });
+
   test('iPad → tablet/ios/safari', () => {
     expect(extractUAFeatures(IPAD)).toMatch(/^dpf=tablet\/ios\/safari/);
   });
@@ -386,6 +530,7 @@ describe('extractUAFeatures', () => {
   });
 
   // Bucket boundary tests: verify version numbers at edges of each range
+  // Math-based 20-version spans starting at 80, capped at 420+.
   test.each([
     ['Chrome/79.0.0.0',  '0-79'],
     ['Chrome/80.0.0.0',  '80-99'],
@@ -394,8 +539,14 @@ describe('extractUAFeatures', () => {
     ['Chrome/119.0.0.0', '100-119'],
     ['Chrome/120.0.0.0', '120-139'],
     ['Chrome/139.0.0.0', '120-139'],
-    ['Chrome/140.0.0.0', '140+'],
-    ['Chrome/999.0.0.0', '140+'],
+    ['Chrome/140.0.0.0', '140-159'],
+    ['Chrome/159.0.0.0', '140-159'],
+    ['Chrome/160.0.0.0', '160-179'],
+    ['Chrome/200.0.0.0', '200-219'],
+    ['Chrome/400.0.0.0', '400-419'],
+    ['Chrome/419.0.0.0', '400-419'],
+    ['Chrome/420.0.0.0', '420+'],
+    ['Chrome/999.0.0.0', '420+'],
   ])('version bucket boundary: %s → ver=%s', (chromeToken, expected) => {
     // Wrap in a minimal browser-like UA so detectDevice/detectPlatform work
     const ua = `Mozilla/5.0 (X11; Linux x86_64) ${chromeToken} Safari/537.36`;

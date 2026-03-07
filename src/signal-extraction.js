@@ -199,6 +199,8 @@ const AUTOMATION_MARKERS = [
   /\bcurl\//i, /\bwget\//i, /HTTPie/i,
   /node-fetch/i, /undici/i, /axios\//i, /\bgot\//i, /superagent/i,
   /Cypress/i, /TestCafe/i, /Nightwatch/i, /WebdriverIO/i,
+  /Scrapy/i, /Java\/|Java HttpURLConnection/i, /PostmanRuntime\//i,
+  /\bDeno\//i, /\bhttpx\b|python-httpx/i,
 ];
 
 const HEADLESS_MARKERS = [/HeadlessChrome/i, /\bHeadless\b/i];
@@ -237,8 +239,18 @@ function computeUAEntropy(userAgent) {
 
 // ── §6.3.1  UA dpf/version parsing ─────────────────────────────────────────
 
-/** @returns {'desktop'|'mobile'|'tablet'|'server'|'unknown'} */
+/** @returns {'desktop'|'mobile'|'tablet'|'smarttv'|'console'|'car'|'wearable'|'vr'|'server'|'unknown'} */
 function detectDevice(ua) {
+  // Smart TV: check before tablet/mobile (some TVs include Android)
+  if (/SmartTV|SMART-TV|\bTizen\b|\bWebOS\b|\bBRAVIA\b|\bVizio\b|\bRoku\b|\bAppleTV\b|\bFire TV\b|\bAndroidTV\b|\btvOS\b|\bHBBTV\b/i.test(ua)) return 'smarttv';
+  // Gaming consoles
+  if (/\b(PlayStation|PLAYSTATION|Xbox|Nintendo)\b/i.test(ua)) return 'console';
+  // VR headsets (Meta Quest / Oculus)
+  if (/OculusBrowser|\bQuest\b/i.test(ua)) return 'vr';
+  // Wearables (Apple Watch, etc.)
+  if (/\bWatch\b|\bwearable\b/i.test(ua)) return 'wearable';
+  // Automotive
+  if (/\bTesla\b|\bCarPlay\b/i.test(ua)) return 'car';
   if (/\b(iPad|Tablet|PlayBook|Silk|Kindle)\b/i.test(ua)) return 'tablet';
   if (/\b(iPhone|iPod|Android.*Mobile|Mobile.*Android|webOS|BlackBerry|Opera Mini|IEMobile|Windows Phone)\b/i.test(ua)) return 'mobile';
   if (/\b(Android)\b/i.test(ua) && !/Mobile/i.test(ua)) return 'tablet';
@@ -247,24 +259,31 @@ function detectDevice(ua) {
   return 'unknown';
 }
 
-/** @returns {'windows'|'mac'|'ios'|'android'|'linux'|'other'} */
+/** @returns {'windows'|'mac'|'ios'|'android'|'linux'|'chromeos'|'freebsd'|'other'} */
 function detectPlatform(ua) {
   if (/\b(iPhone|iPad|iPod)\b/i.test(ua))          return 'ios';
   if (/\bAndroid\b/i.test(ua))                      return 'android';
+  if (/\bCrOS\b/i.test(ua))                         return 'chromeos';
   if (/\bMacintosh\b/i.test(ua))                    return 'mac';
   if (/\bWindows\b/i.test(ua))                      return 'windows';
+  if (/\bFreeBSD\b/i.test(ua))                      return 'freebsd';
   if (/\bLinux\b/i.test(ua) || /\bX11\b/i.test(ua)) return 'linux';
   return 'other';
 }
 
-/** @returns {'chrome'|'safari'|'firefox'|'edge'|'other'|'bot'} */
+/** @returns {'chrome'|'safari'|'firefox'|'edge'|'ucbrowser'|'other'|'bot'} */
 function detectFamily(ua) {
-  if (/\b(Googlebot|bingbot|Baiduspider|YandexBot|DuckDuckBot|Slurp|ia_archiver)\b/i.test(ua)) return 'bot';
+  // Bots: search engine crawlers + AI/SEO crawlers
+  if (/\b(Googlebot|bingbot|Baiduspider|YandexBot|DuckDuckBot|Slurp|ia_archiver|GPTBot|ClaudeBot|CCBot|Bytespider|Applebot|PetalBot|SemrushBot|AhrefsBot|DotBot)\b/i.test(ua)) return 'bot';
+  // UC Browser: mobile-heavy, no Client Hints — check before Chrome
+  if (/UCBrowser|UCWEB/i.test(ua)) return 'ucbrowser';
   // Order matters: Edge before Chrome (Edge UA contains "Chrome")
   if (/\bEdg(?:e|A)?\/\d/i.test(ua))  return 'edge';
   if (/\bFirefox\//i.test(ua))         return 'firefox';
   // Safari check: has "Safari/" but NOT "Chrome/" or "Chromium/" or "HeadlessChrome/"
   if (/\bSafari\//i.test(ua) && !/Chrome|Chromium|HeadlessChrome/i.test(ua)) return 'safari';
+  // Opera (OPR/) and Brave share Chromium engine; keep as 'chrome' family
+  // since they support Client Hints and score the same.
   if (/(?:\b|Headless)Chrom(?:e|ium)\//i.test(ua))  return 'chrome';
   return 'other';
 }
@@ -294,16 +313,21 @@ function extractMajorVersion(ua) {
 
 /**
  * Bucket a major version number into a range token.
+ * Uses math-based 20-version spans starting at 80, capped at 420+.
+ * Legacy range: 0-79. Then 80-99, 100-119, …, 400-419, 420+.
  * @param {number|null} ver
  * @returns {string}
  */
 function bucketVersion(ver) {
-  if (ver == null) return '0-79';
-  if (ver < 80)  return '0-79';
-  if (ver < 100) return '80-99';
-  if (ver < 120) return '100-119';
-  if (ver < 140) return '120-139';
-  return '140+';
+  if (ver == null || ver < 80)  return '0-79';
+  if (ver >= 420) return '420+';
+  // 20-version spans starting at 80: floor((ver - 80) / 20) gives bucket index
+  const base = 80;
+  const span = 20;
+  const bucketIndex = Math.floor((ver - base) / span);
+  const lo = base + bucketIndex * span;
+  const hi = lo + span - 1;
+  return `${lo}-${hi}`;
 }
 
 // ── §6.3.1  extractUAFeatures ──────────────────────────────────────────────
