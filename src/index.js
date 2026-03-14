@@ -180,6 +180,10 @@ async function proxyVAIRequest(cfg, request) {
         setIfPresent(forwardHeaders, 'X-PW-Net',    extractNetFeatures(cf.asn));
         setIfPresent(forwardHeaders, 'X-PW-CH',     extractCHFeatures(headers['sec-ch-ua'], headers['user-agent']));
 
+        // Geo context: forward CF edge geo data for logging/investigation (paywalls-site-60rp)
+        setIfPresent(forwardHeaders, 'X-PW-Geo',
+            cf.country ? `co=${cf.country}, re=${cf.region || ''}, ci=${cf.city || ''}, asn=${cf.asn || ''}` : null);
+
         // Tier 3: UA features + HMAC (§6.3)
         setIfPresent(forwardHeaders, 'X-PW-UA', extractUAFeatures(headers['user-agent']));
         setIfPresent(forwardHeaders, 'X-PW-UA-HMAC', await computeUAHMAC(headers['user-agent'], cfg.vaiUAHmacKey));
