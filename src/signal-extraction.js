@@ -446,6 +446,50 @@ function bucketVersion(ver) {
 }
 
 // ── §6.3.1  extractUAFeatures ──────────────────────────────────────────────
+
+/**
+ * Detect structurally impossible or fabricated browser version strings.
+ *
+ * Chrome frozen UA policy (since Chrome 107, late 2022):
+ *   Real Chrome reports Chrome/[major].0.0.0 — minor, build, and patch are
+ *   always zero.  Any major >= 107 with non-zero build or patch is fabricated.
+ *
+ * Legacy Chrome with 4-digit patch (e.g. Chrome/48.0.1025.1402):
+ *   Chrome patch numbers are 1-4 digits (max ~6367 in historical builds).
+ *   A 4+ digit patch on an old Chrome version is structurally fabricated.
+ *
+ * Fabricated Edge (e.g. Edge/18.19582):
+ *   Edge/18 was EdgeHTML-era; real minor versions were at most 3 digits.
+ *   A 5-digit minor on EdgeHTML is structurally impossible.
+ *
+ * @param {string} ua
+ * @returns {boolean}
+ */
+function isFabricatedVersion(ua) {
+  // Chrome / HeadlessChrome / Chromium: full version parse
+  const chromeMatch = ua.match(/(?:\b|Headless)Chrom(?:e|ium)\/(\d+)\.(\d+)\.(\d+)\.(\d+)/);
+  if (chromeMatch) {
+    const major = parseInt(chromeMatch[1], 10);
+    const build = parseInt(chromeMatch[3], 10);
+    const patch = parseInt(chromeMatch[4], 10);
+
+    // Frozen UA policy: Chrome >= 107 must be major.0.0.0
+    if (major >= 107 && (build !== 0 || patch !== 0)) return true;
+
+    // 4-digit patch on any Chrome version is structurally impossible
+    if (chromeMatch[4].length >= 4) return true;
+  }
+
+  // EdgeHTML-era (Edge/12-18): minor version should be ≤ 3 digits
+  const edgeMatch = ua.match(/\bEdge\/(\d+)\.(\d+)/);
+  if (edgeMatch) {
+    const major = parseInt(edgeMatch[1], 10);
+    if (major <= 18 && edgeMatch[2].length >= 5) return true;
+  }
+
+  return false;
+}
+
 /**
  * Parse a User-Agent string into an SF-Dictionary of derived features.
  *
@@ -468,6 +512,7 @@ export function extractUAFeatures(userAgent) {
 
   if (HEADLESS_MARKERS.some(re => re.test(ua))) parts.push('headless');
   if (AUTOMATION_MARKERS.some(re => re.test(ua))) parts.push('automation');
+  if (isFabricatedVersion(ua)) parts.push('fabricated');
 
   parts.push(`entropy=${computeUAEntropy(ua)}`);
 

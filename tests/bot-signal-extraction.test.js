@@ -35,12 +35,13 @@ describe('HeadlessChrome signal extraction', () => {
     expect(result).toMatch(/browser/);
   });
 
-  test('HeadlessChrome/143 should have headless marker', () => {
+  test('HeadlessChrome/143 should have headless and fabricated markers', () => {
     const result = extractUAFeatures(
       'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/143.0.7499.4 Safari/537.36'
     );
     expect(result).toMatch(/\bheadless\b/);
     expect(result).toMatch(/dpf=desktop\/linux\/chrome/);
+    expect(result).toMatch(/\bfabricated\b/);
   });
 });
 
@@ -100,25 +101,24 @@ describe('Fabricated Chrome version UAs — signal extraction', () => {
     { ua: 'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/59.0.7842.1119 Mobile Safari/537.36', ver: '0-79' },
   ];
 
-  test.each(fabricatedUAs)('$ver Chrome with 4-digit patch parses to legacy version bucket', ({ ua, ver }) => {
+  test.each(fabricatedUAs)('$ver Chrome with 4-digit patch → fabricated marker', ({ ua, ver }) => {
     const result = extractUAFeatures(ua);
     expect(result).toMatch(new RegExp(`ver=${ver}`));
     expect(result).toMatch(/browser/);
-    // NOTE: Future improvement — extractUAFeatures should detect 4-digit patch as fabrication signal
+    expect(result).toMatch(/\bfabricated\b/);
   });
 });
 
 // ── 4. Fabricated Edge version ─────────────────────────────────────────────
 
 describe('Fabricated Edge version — signal extraction', () => {
-  test('Edge/18.19582 should parse as edge family', () => {
+  test('Edge/18.19582 should parse as edge family and be fabricated', () => {
     const result = extractUAFeatures(
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.7680.71 Safari/537.36 Edge/18.19582'
     );
-    // Edge detection should still work
     expect(result).toMatch(/\/edge/);
     expect(result).toMatch(/dpf=desktop\/windows\/edge/);
-    // NOTE: Future improvement — detect impossible Edge/Chrome version combo
+    expect(result).toMatch(/\bfabricated\b/);
   });
 });
 
@@ -133,11 +133,12 @@ describe('Outdated browser UAs from bot farm — version bucketing', () => {
     expect(result).toMatch(/dpf=mobile\/android\/chrome/);
   });
 
-  test('Chrome/117 should bucket to 100-119', () => {
+  test('Chrome/117 with non-zero build (frozen UA violation) → fabricated', () => {
     const result = extractUAFeatures(
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.5938.132 Safari/537.36'
     );
     expect(result).toMatch(/ver=100-119/);
+    expect(result).toMatch(/\bfabricated\b/);
   });
 
   test('Chrome/83 should bucket to 80-99', () => {
@@ -167,6 +168,7 @@ describe('Legitimate browser UAs — correct feature extraction', () => {
     expect(result).toMatch(/browser/);
     expect(result).not.toMatch(/headless/);
     expect(result).not.toMatch(/automation/);
+    expect(result).not.toMatch(/fabricated/);
   });
 
   test('Chrome/146 on Windows → desktop/windows/chrome, current version bucket', () => {
@@ -177,6 +179,7 @@ describe('Legitimate browser UAs — correct feature extraction', () => {
     expect(result).toMatch(/ver=140-159/);
     expect(result).not.toMatch(/headless/);
     expect(result).not.toMatch(/automation/);
+    expect(result).not.toMatch(/fabricated/);
   });
 
   test('Safari/17.4.1 on macOS → desktop/mac/safari', () => {
@@ -186,6 +189,7 @@ describe('Legitimate browser UAs — correct feature extraction', () => {
     expect(result).toMatch(/dpf=desktop\/mac\/safari/);
     expect(result).not.toMatch(/headless/);
     expect(result).not.toMatch(/automation/);
+    expect(result).not.toMatch(/fabricated/);
   });
 
   test('Edge/122 on Windows → desktop/windows/edge', () => {
@@ -195,5 +199,6 @@ describe('Legitimate browser UAs — correct feature extraction', () => {
     expect(result).toMatch(/dpf=desktop\/windows\/edge/);
     expect(result).toMatch(/ver=120-139/);
     expect(result).not.toMatch(/headless/);
+    expect(result).not.toMatch(/fabricated/);
   });
 });
