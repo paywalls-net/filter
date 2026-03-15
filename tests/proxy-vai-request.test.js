@@ -291,6 +291,56 @@ describe('proxyVAIRequest — signal extraction pipeline', () => {
   });
 });
 
+// ── sec-fetch-mismatch CDN marker emission ──────────────────────────────────
+//
+// When the CDN sees sec-fetch-dest: document + sec-fetch-mode: navigate on a
+// vai.json request, it appends sec-fetch-mismatch to X-PW-UA. This marker is
+// used by the cloud-api to reclassify the request as OTHER without inspecting
+// raw Sec-Fetch headers in the classification path.
+
+describe('CDN sec-fetch-mismatch marker emission', () => {
+  let handler;
+
+  beforeAll(async () => {
+    handler = await init('cloudflare');
+  });
+
+  async function proxyVAI(url, headerMap, cf) {
+    const request = makeRequest(url, headerMap, cf);
+    capturedFetchArgs = null;
+    await handler(request, ENV, CTX);
+    return capturedFetchArgs;
+  }
+
+  test('document/navigate on vai.json → appends sec-fetch-mismatch', async () => {
+    const mismatchHeaders = {
+      ...CHROME_MAC_HEADERS,
+      'sec-fetch-dest': 'document',
+      'sec-fetch-mode': 'navigate',
+    };
+    const args = await proxyVAI('https://pub.example.com/pw/vai.json', mismatchHeaders, CF_PROPS);
+    expect(args.headers['X-PW-UA']).toContain('sec-fetch-mismatch');
+  });
+
+  test('empty/cors on vai.json (normal XHR) → no sec-fetch-mismatch', async () => {
+    const args = await proxyVAI('https://pub.example.com/pw/vai.json', CHROME_MAC_HEADERS, CF_PROPS);
+    expect(args.headers['X-PW-UA']).not.toContain('sec-fetch-mismatch');
+  });
+
+  test('document/navigate on non-vai path → no sec-fetch-mismatch', async () => {
+    const mismatchHeaders = {
+      ...CHROME_MAC_HEADERS,
+      'sec-fetch-dest': 'document',
+      'sec-fetch-mode': 'navigate',
+    };
+    const args = await proxyVAI('https://pub.example.com/pw/access/check', mismatchHeaders, CF_PROPS);
+    // sec-fetch-mismatch only applies to vai.json requests
+    if (args && args.headers) {
+      expect(args.headers['X-PW-UA'] || '').not.toContain('sec-fetch-mismatch');
+    }
+  });
+});
+
 // ── logAccess — non-VAI path raw header forwarding ───────────────────────────
 //
 // Verifies that logAccess() does NOT transform headers like proxyVAIRequest().

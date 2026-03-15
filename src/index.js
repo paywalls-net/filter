@@ -185,7 +185,18 @@ async function proxyVAIRequest(cfg, request) {
             cf.country ? `co=${cf.country}, re=${cf.region || ''}, ci=${cf.city || ''}, asn=${cf.asn || ''}` : null);
 
         // Tier 3: UA features + HMAC (§6.3)
-        setIfPresent(forwardHeaders, 'X-PW-UA', extractUAFeatures(headers['user-agent']));
+        let uaFeatures = extractUAFeatures(headers['user-agent']);
+
+        // Sec-Fetch context mismatch detection (paywalls-site-dz23):
+        // vai.json is fetched via sync XHR — browsers set Sec-Fetch-Dest: empty,
+        // Mode: cors. If we see document/navigate, the headless browser is leaking
+        // page-level Sec-Fetch onto the XHR. Emit marker so cloud-api can classify.
+        if (uaFeatures && cloudApiPath.endsWith('/vai.json') &&
+            headers['sec-fetch-dest'] === 'document' && headers['sec-fetch-mode'] === 'navigate') {
+            uaFeatures += ', sec-fetch-mismatch';
+        }
+
+        setIfPresent(forwardHeaders, 'X-PW-UA', uaFeatures);
         setIfPresent(forwardHeaders, 'X-PW-UA-HMAC', await computeUAHMAC(headers['user-agent'], cfg.vaiUAHmacKey));
         setIfPresent(forwardHeaders, 'X-PW-CT-FP',   await computeConfidenceToken(headers['user-agent'], headers['accept-language'], headers['sec-ch-ua']));
 

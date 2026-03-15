@@ -514,6 +514,11 @@ export function extractUAFeatures(userAgent) {
   if (AUTOMATION_MARKERS.some(re => re.test(ua))) parts.push('automation');
   if (isFabricatedVersion(ua)) parts.push('fabricated');
 
+  // Stale version: Chrome family with ver=0-79 is 6+ years old (pre-2020)
+  if (family === 'chrome' && extractMajorVersion(ua) !== null && extractMajorVersion(ua) < 80) {
+    parts.push('stale');
+  }
+
   parts.push(`entropy=${computeUAEntropy(ua)}`);
 
   return parts.join(', ');

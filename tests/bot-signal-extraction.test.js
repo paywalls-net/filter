@@ -200,5 +200,64 @@ describe('Legitimate browser UAs — correct feature extraction', () => {
     expect(result).toMatch(/ver=120-139/);
     expect(result).not.toMatch(/headless/);
     expect(result).not.toMatch(/fabricated/);
+    expect(result).not.toMatch(/stale/);
+  });
+});
+
+// ── 7. Stale browser version marker ───────────────────────────────────────
+
+describe('Stale browser version — signal extraction', () => {
+  test('Chrome/59 (2017, ver=0-79) should have stale marker', () => {
+    const result = extractUAFeatures(
+      'Mozilla/5.0 (Linux; Android 7.0; SM-G930V Build/NRD90M) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/59.0.3071.125 Mobile Safari/537.36'
+    );
+    expect(result).toMatch(/ver=0-79/);
+    expect(result).toMatch(/\bstale\b/);
+  });
+
+  test('Chrome/79 (2019, ver=0-79) should have stale marker', () => {
+    const result = extractUAFeatures(
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.79 Safari/537.36'
+    );
+    expect(result).toMatch(/ver=0-79/);
+    expect(result).toMatch(/\bstale\b/);
+  });
+
+  test('Chrome/83 (80-99 bucket, borderline old) should NOT have stale marker', () => {
+    const result = extractUAFeatures(
+      'Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.61 Safari/537.36'
+    );
+    expect(result).toMatch(/ver=80-99/);
+    expect(result).not.toMatch(/\bstale\b/);
+  });
+
+  test('Chrome/145 (current) should NOT have stale marker', () => {
+    const result = extractUAFeatures(
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36'
+    );
+    expect(result).toMatch(/ver=140-159/);
+    expect(result).not.toMatch(/\bstale\b/);
+  });
+
+  test('Safari/17 should NOT have stale marker', () => {
+    const result = extractUAFeatures(
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Safari/605.1.15'
+    );
+    expect(result).not.toMatch(/\bstale\b/);
+  });
+
+  test('Firefox/130 should NOT have stale marker', () => {
+    const result = extractUAFeatures(
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:130.0) Gecko/20100101 Firefox/130.0'
+    );
+    expect(result).not.toMatch(/\bstale\b/);
+  });
+
+  test('Fabricated Chrome/48.0.1025.1402 also gets stale (both markers)', () => {
+    const result = extractUAFeatures(
+      'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/48.0.1025.1402 Mobile Safari/537.36'
+    );
+    expect(result).toMatch(/\bfabricated\b/);
+    expect(result).toMatch(/\bstale\b/);
   });
 });
